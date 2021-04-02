@@ -106,20 +106,14 @@ def ex2():
     for i in range(0,36):
         constraints.append([names_5[i],[1.0,-1.0]*9 ])
     names_6 = ["x"+str(i)+'0' + str(k)     for k in range(1,5) for i in range(1, 10)   ]
-
     names_6 = np.array(names_6).reshape(4,9)
     # print(names_6)
     for i in range(0,4):
         constraints.append([names_6[i],[1]*9])
-
+    for i in range(0,40):
+        constraints.append([[time[i]],[1]])     
     for i in range(0,40):
         constraints.append([[time[i]],[1]])
-       
-    for i in range(0,40):
-        constraints.append([[time[i]],[1]])
-
-
-
     names_8 = ["s" + str(i ) + str(k)for k in range(1,5) for i in range(0,10) ]
     names_8 = [i for i in names_8 for j in range(10)] 
     # print((names_8))
@@ -135,17 +129,27 @@ def ex2():
         names_7.append(my_names_[i])
         names_7.append(names_9[i])
     names_7 = np.array(names_7).reshape(400,3)
+    print(names_7)
+
     import collections
+
+    new_names_7 = list()
     for i in names_7:
-        i = [item for item,count in collections.Counter(i).items() if count ==1]
+        new = [item for item,count in collections.Counter(i).items() if count > 1]
+    #     print(new)
+        if len(new) == 0:
+            new_names_7.append(list(i))
+    new_names_7 = np.array(new_names_7)
+    print(len(new_names_7))
+
     names_10 = ['x' + str(i) + str(i) + str(k) for k in range(1,5) for i in range(0,10) ]
     names_10 = np.array(names_10).reshape(40,1)
     for i in range(360):
-        constraints.append([         ,[1,M,-1]*360])
-    for i range(40):
+        constraints.append([  new_names_7[i],[1,M,-1]*360])
+    for i in range(40):
         constraints.append([names_10[i],M])
     
-    print(names_10)
+    # print(names_10)
     # print(names_7)
     # print(len(names_7))
     M = 40
@@ -156,20 +160,16 @@ def ex2():
             time_travel.remove(i)
     time_travel = time_travel*4
     
-    print(time_travel)
+    # print(time_travel)
     print(len(time_travel))
     start_time = pd.read_excel(xls, 'Time Window')['Time Start']
    
     end_time = pd.read_excel(xls, 'Time Window')['Time End']
     my_sense = ["E"]*13 + ["L"]*4 + ["E"] * 36 + ["E"]*4 + ["L"] *40 + ["G"] *40  +["L"]*400
     # print(len(my_sense))
-    my_rhs = [1]*13 + [float(capity.iat[i]) for i in range(0,4)] + [0]*36 + [1]*4 + [float(end_time.iat[i]) for i in range(0,10)]*4 + [float(start_time.iat[i]) for i in range(0,10)]*4 +[M] * 40 + time_travel
+    # my_rhs = [1]*13 + [float(capity.iat[i]) for i in range(0,4)] + [0]*36 + [1]*4 + [float(end_time.iat[i]) for i in range(0,10)]*4 + [float(start_time.iat[i]) for i in range(0,10)]*4 +[M] * 40 + time_travel
 
-    my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]
-    
-
-    # print(len(my_rownames))
-    
+    # my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]  
     # myProblem.linear_constraints.add(lin_expr = constraints, senses = my_sense, rhs = my_rhs, names = my_rownames)
     # myProblem.solve()
     # print(myProblem.solution.get_values())
