@@ -46,7 +46,7 @@ def ex1():
     print(myProblem.solution.get_values())
 
 def ex2():
-   
+    M = 40
     xls = pd.ExcelFile('C:\\Users\\tlhqu\\Desktop\\logistic.xlsx')
     try:
         myProblem= cplex.Cplex()
@@ -142,17 +142,17 @@ def ex2():
     new_names_7 = np.array(new_names_7)
     print(len(new_names_7))
 
-    names_10 = ['x' + str(i) + str(i) + str(k) for k in range(1,5) for i in range(0,10) ]
-    names_10 = np.array(names_10).reshape(40,1)
+    # names_10 = ['x' + str(i) + str(i) + str(k) for k in range(1,5) for i in range(0,10) ]
+    # names_10 = np.array(names_10).reshape(40,1)
     for i in range(360):
         constraints.append([  new_names_7[i],[1,M,-1]*360])
-    for i in range(40):
-        constraints.append([names_10[i],M])
+    # for i in range(40):
+    #     constraints.append([names_10[i],M])
     
     # print(names_10)
     # print(names_7)
     # print(len(names_7))
-    M = 40
+    
     time_travel = pd.read_excel(xls, 'Time Matrix')
     time_travel = [-float(time_travel.iat[i,j])  for i in range(0,10 ) for j in range(1,11 )]
     for i in time_travel:
@@ -165,13 +165,13 @@ def ex2():
     start_time = pd.read_excel(xls, 'Time Window')['Time Start']
    
     end_time = pd.read_excel(xls, 'Time Window')['Time End']
-    my_sense = ["E"]*13 + ["L"]*4 + ["E"] * 36 + ["E"]*4 + ["L"] *40 + ["G"] *40  +["L"]*400
+    my_sense = ["E"]*13 + ["L"]*4 + ["E"] * 36 + ["E"]*4 + ["L"] *40 + ["G"] *40  +["L"]*360
     # print(len(my_sense))
-    # my_rhs = [1]*13 + [float(capity.iat[i]) for i in range(0,4)] + [0]*36 + [1]*4 + [float(end_time.iat[i]) for i in range(0,10)]*4 + [float(start_time.iat[i]) for i in range(0,10)]*4 +[M] * 40 + time_travel
-
-    # my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]  
-    # myProblem.linear_constraints.add(lin_expr = constraints, senses = my_sense, rhs = my_rhs, names = my_rownames)
-    # myProblem.solve()
+    my_rhs = [1]*13 + [float(capity.iat[i]) for i in range(0,4)] + [0]*36 + [1]*4 + [float(end_time.iat[i]) for i in range(0,10)]*4 + [float(start_time.iat[i]) for i in range(0,10)]*4 + time_travel
+    
+    my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]  
+    myProblem.linear_constraints.add(lin_expr = constraints, senses = my_sense, rhs = my_rhs, names = my_rownames)
+    myProblem.solve()
     # print(myProblem.solution.get_values())
 
 
