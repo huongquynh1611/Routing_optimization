@@ -172,7 +172,11 @@ def ex2():
     my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]  
     myProblem.linear_constraints.add(lin_expr = constraints, senses = my_sense, rhs = my_rhs, names = my_rownames)
     myProblem.solve()
-    # print(myProblem.solution.get_values())
+    try:
+        print(myProblem.solution.get_values())
+    except cplex.exceptions.errors.CplexSolverError:
+        print("No solution")
+
 
 
 if __name__ == '__main__':
