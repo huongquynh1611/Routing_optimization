@@ -72,7 +72,7 @@ for i in range(0,len(names_4)):
 
 names_4_5 = np.array(names_4_5).reshape(int(len(names_4)/num_location),int(len(names_4_5)/(len(names_4)/num_location)))
 # print(names_4_5)
-for i in range(0,names_4_5.shape[0]):
+for i in range(0,names_4_5.shape[0]):vê
     constraints.append([names_4_5[i], [1,-1]*(int(names_4_5.shape[1]/2))])
  
 # CONSTRAINTS (6)

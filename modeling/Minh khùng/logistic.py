@@ -31,7 +31,6 @@ def ex1():
         myProblem.variables.set_types(i, myProblem.variables.type.integer)
     myProblem.variables.add(obj = my_obj)
     
-    
     # set constraints
     my_sense = "GGGGGGGLLL"
     demand = pd.read_excel(xls, 'Demand')['Value']
@@ -45,16 +44,6 @@ def ex1():
     myProblem.linear_constraints.add(lin_expr = rows, senses = my_sense, rhs = my_rhs, names = my_rownames)
     myProblem.solve()
     print(myProblem.solution.get_values())
-
-
-
-
-
-
-
-
-
-
 
 def ex2():
     M = 40
