@@ -86,8 +86,8 @@ names_10 = ["x" +str(i) + str(i) + str(k)  for i in range(0, num_location)    fo
 print(names_10)
 print(len(names_10))
 constraints.append([names_10,[1]*len(names_10)])
-   
-
+# CONSTRAINTS 11 X_IJK ! X_JIK
+names_11
 
 
 
