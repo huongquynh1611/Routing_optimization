@@ -72,7 +72,7 @@ for i in range(0,len(names_4)):
 
 names_4_5 = np.array(names_4_5).reshape(int(len(names_4)/num_location),int(len(names_4_5)/(len(names_4)/num_location)))
 # print(names_4_5)
-for i in range(0,names_4_5.shape[0]):
+for i in range(0,names_4_5.shape[0]):vê
     constraints.append([names_4_5[i], [1,-1]*(int(names_4_5.shape[1]/2))])
  
 # CONSTRAINTS (6)
@@ -83,20 +83,17 @@ for i in range(0,names_6.shape[0]):
     constraints.append([names_6[i],[1]*names_6.shape[1]])
 # CONSTRAINTS (10)    X_IJK = 0 IF I=J , FOR ALL I,J
 names_10 = ["x" +str(i) + str(i) + str(k)  for i in range(0, num_location)    for k in range(1,num_vehicle+1)]
-
+print(names_10)
+print(len(names_10))
 constraints.append([names_10,[1]*len(names_10)])
-# CONSTRAINTS 11     SUM SUM x_IJK = 1 FOR ALL J 
-names_11 = ["x" + str(i) + str(j) +str(k)  for j in range(1,num_location) for k in range(1, num_vehicle+1) for i in range(0,num_location)]
-
-names_11 = np.array(names_11).reshape(num_location-1,int(len(names_11)/(num_location-1)))
-# print(names_11)
-for i in range(0,names_11.shape[0]):
-    constraints.append([names_11[i],[1]*names_11.shape[1]])
+   
 
 
-my_sense = ["E"]*(names_1.shape[0]-1) + ["L"]*(names_2.shape[0]) + ["E"] * (names_3.shape[0]) + ["E"] *names_4_5.shape[0] + ["E"]*names_6.shape[0] + ["E"]+ ["E"]* names_11.shape[0]
+
+
+my_sense = ["E"]*(names_1.shape[0]-1) + ["L"]*(names_2.shape[0]) + ["E"] * (names_3.shape[0]) + ["E"] *names_4_5.shape[0] + ["E"]*names_6.shape[0] + ["E"]
     
-my_rhs = [1]*(names_1.shape[0]-1) + [float(capity.iat[i]) for i in range(0,names_2.shape[0])] + [1]*names_3.shape[0] + [0] *names_4_5.shape[0] + [1]*names_6.shape[0] +[0] + [1]*names_11.shape[0]
+my_rhs = [1]*(names_1.shape[0]-1) + [float(capity.iat[i]) for i in range(0,names_2.shape[0])] + [1]*names_3.shape[0] + [0] *names_4_5.shape[0] + [1]*names_6.shape[0] +[0]
 
 my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]  
 myProblem.linear_constraints.add(lin_expr = constraints, senses = my_sense, rhs = my_rhs, names = my_rownames)
