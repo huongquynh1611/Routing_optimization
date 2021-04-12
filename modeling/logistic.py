@@ -208,22 +208,74 @@ def ex2():
 
     except cplex.exceptions.errors.CplexSolverError:
         print("No solution")
-def ex3():
-    M = 40
-    xls = pd.ExcelFile('D:\\Quynh\\Routing_optimization\\modeling\\logistic.xlsx')
-    try:
-        myProblem= cplex.Cplex()
-        num_vehicle = 4
-        num_location = 10 # tính cả depot
-        my_names_ = ["x"+str(i)+str(j) + str(k) for k in range(1,num_vehicle + 1) for i in range(0,num_location) for j in range(0, num_location) ]  
-        print(len(my_names_))
-        # myProblem.variables.add( )    
-    except CplexError:
-        print ("exc")
-        return
 
 
 if __name__ == '__main__':
     ex1()
+    # CONSTRAINTS (7) MAKE SURE VEHICLE SHoULD NOT ARRIVE AT CUS J BEFORE TIME ...
+
+names_8 = ["s" + str(i ) + str(k)for k in range(1,num_vehicle+1) for i in range(0,num_location) ]
+names_8 = [i for i in names_8 for j in range(num_location)] 
+
+names_9 = ["s" + str(i ) + str(k)for k in range(1,num_vehicle+1) for i in range(0,num_location) ]
+names_9 = [names_9[i:i+num_location] for i in range(0,len(names_9),num_location) for j in range(num_location)]
+names_9 =  [i for j in names_9 for i in j]
+
+names_7 = list()
+for i in range(0,len(names_8)):
+    names_7.append(names_8[i])
+    names_7.append(my_names_[i])
+    names_7.append(names_9[i])
+names_7 = np.array(names_7).reshape(int(len(names_7)/3),3)
+
+import collections
+
+new_names_7 = list()
+for i in names_7:
+    new = [item for item,count in collections.Counter(i).items() if count > 1]
+    if len(new) == 0:
+        new_names_7.append(list(i))
+new_names_7 = np.array(new_names_7)   
+# print(new_names_7)
+print(len(new_names_7))
+for i in range(len(new_names_7)):
+    constraints.append([  new_names_7[i],[1]*len(new_names_7)+[float(max_M[i])]+[-1]*len(new_names_7)])
+
+for i in time_travel:
+    if (i == float(0)):
+        time_travel.remove(i)
+time_travel = time_travel*num_vehicle
+# # # CONSTRAINTS (8)
+for i in range(0,len(time)):
+    constraints.append([[time[i]],[1]])     
+for i in range(0,len(time)):
+    constraints.append([[time[i]],[1]])
+
+
+# CONSTRAINTS 12   SUM S0K  = 0
+times_2 = ["s" + '0' + str(k) for k in range(1,num_vehicle+1)]
+# print(times_2)
+
+constraints.append([times_2,[1]*len(times_2)])
+# CONSTRAINTS 13 : 
+
+names_14 = ["x" + str(i) + str(j) + str(k) for k in range(1,num_vehicle+1) for i in range(0,num_location) for j in range(0,num_location) ]
+names_14 = np.array(names_14).reshape(int(len(names_14)/num_location),num_location)
+names_15 = ["s" + str(i) + str(k) for k in range(1,num_vehicle+1) for i in range(0,num_location)]
+print(names_14)
+
+print(len(names_15))
+names_14 = np.insert(names_14,num_location,names_15,axis = 1)
+
+end_time_ = end_time*3
+# print(names_14.shape[0])
+
+for i in range(len(names_14)):
+    constraints.append([names_14[i] ,[end_time_[i]]*num_location+[-1]])
+ 
+ # CONSTRAINTS 14
+start_time_ = start_time*3
+for i in range(len(names_14)):
+    constraints.append([names_14[i] ,[start_time_[i]]*num_location+[-1]])
 
 

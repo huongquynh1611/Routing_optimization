@@ -8,10 +8,10 @@ import numpy as np
 xls = pd.ExcelFile('D:\\Quynh\\Routing_optimization\\modeling\\logistic.xlsx')
 try:
     myProblem= cplex.Cplex()
-    num_vehicle = 3
-    num_location = 10# tính cả depot
+    num_vehicle = 1
+    num_location = 3# tính cả depot
     my_names_ = ["x"+str(i)+str(j) + str(k) for k in range(1,num_vehicle + 1) for i in range(0,num_location) for j in range(0, num_location) ]  
-    print(len(my_names_))
+    # print(len(my_names_))
        
 except CplexError:
     print ("exc")
@@ -33,8 +33,10 @@ myProblem.variables.add(names=time,types=["C"]*len(time))
 # create constants
 start_time = pd.read_excel(xls, 'Time Window')['Time Start']
 start_time= [float(start_time.iat[i]) for i in range(0,num_location)]
+start_time = start_time[0:num_location+1]
 end_time = pd.read_excel(xls, 'Time Window')['Time End']
-end_time = [float(end_time.iat[i]) for i in range(0,num_location)]
+end_time = [float(end_time.iat[i]) for i in range(0,num_location)] 
+end_time = end_time[0:num_location+1]
 
 M=list()
 M_new=[]
@@ -46,26 +48,28 @@ for i in M:
 # print((M_new))
 time_matrix = pd.read_excel(xls, 'Time Matrix')
 time_travel = [float(time_matrix.iat[i,j])  for i in range(0,num_location ) for j in range(1,num_location+1 )]
-
+print(time_matrix)
 
 time_1 = [float(time_matrix.iat[i,j])  for i in range(0,num_location ) for j in range(1,num_location+1 ) if i != (j-1)]*num_vehicle
+print(time_1)
 # print(len(time_1))  # len = 360
 
 max_M_=list()
 for i in range(len(M_new)):
     max_M_.append(M_new[i] + time_1[i])
 max_M = [x*100 for x in max_M_]
+print(max_M)
 # print((max_M))
 time_ub = list()
 for i in range(len(max_M)):
     time_ub.append(max_M[i] - time_1[i])
-print(len(time_ub))
+print((time_ub))
 # set constraints:
 constraints = list()  # list constraints includes var and coef
 #   CONSTRAINTS (2) ONLY ONE VEHICLE SERVICE ONE CUSTOMER ( CUSTOMER 1,2,..,9)
 names_1 = ["x"+str(i)+str(j) + str(k) for i in range(0, num_location) for k in range(1,num_vehicle+1)  for j in range(0, num_location)  ]
 names_1 = np.array(names_1).reshape(int(len(names_1)/(num_location*num_vehicle)),(num_location*num_vehicle))  # (10,40)
-print(names_1)
+# print(names_1)
 
 for i in range(1,names_1.shape[0]):
     constraints.append([names_1[i],[1.0]*names_1.shape[1]])
@@ -75,7 +79,7 @@ names_2 = np.array(names_2).reshape(num_vehicle,num_location*num_location - num_
 
 demand = pd.read_excel(xls, 'Demand Matrix')['Value']
 demand = [float(demand.iat[i]) for i in range(0,len(demand))]
-
+demand = demand[0:num_location]
 capity = pd.read_excel(xls, 'Capicity')['Value']
 
 for i in range(0,names_2.shape[0]):
@@ -129,9 +133,7 @@ names_13=  np.array(names_13).reshape(int(len(names_13)/2),2)
 for i in range(0,names_13.shape[0]):
     constraints.append([names_13[i],[1,1]])
 
-
-# # CONSTRAINTS (7) MAKE SURE VEHICLE SHoULD NOT ARRIVE AT CUS J BEFORE TIME ...
-
+# CONSTRAINTS (7) 
 names_8 = ["s" + str(i ) + str(k)for k in range(1,num_vehicle+1) for i in range(0,num_location) ]
 names_8 = [i for i in names_8 for j in range(num_location)] 
 
@@ -155,59 +157,21 @@ for i in names_7:
         new_names_7.append(list(i))
 new_names_7 = np.array(new_names_7)   
 # print(new_names_7)
-print(len(new_names_7))
-for i in range(len(new_names_7)):
-    constraints.append([  new_names_7[i],[1]*len(new_names_7)+[float(max_M[i])]+[-1]*len(new_names_7)])
-
-for i in time_travel:
-    if (i == float(0)):
-        time_travel.remove(i)
-time_travel = time_travel*num_vehicle
-# # # # CONSTRAINTS (8)
-# for i in range(0,len(time)):
-#     constraints.append([[time[i]],[1]])     
-# for i in range(0,len(time)):
-#     constraints.append([[time[i]],[1]])
-
-
-# CONSTRAINTS 12   SUM S0K  = 0
-times_2 = ["s" + '0' + str(k) for k in range(1,num_vehicle+1)]
-# print(times_2)
-
-constraints.append([times_2,[1]*len(times_2)])
-# CONSTRAINTS 13 : 
-
-names_14 = ["x" + str(i) + str(j) + str(k) for k in range(1,num_vehicle+1) for i in range(0,num_location) for j in range(0,num_location) ]
-names_14 = np.array(names_14).reshape(int(len(names_14)/num_location),num_location)
-names_15 = ["s" + str(i) + str(k) for k in range(1,num_vehicle+1) for i in range(0,num_location)]
-
-
-print(len(names_15))
-names_14 = np.insert(names_14,10,names_15,axis = 1)
-print([end_time[4]]*num_location+[-1])
-end_time_ = end_time*3
-print(names_14.shape[0])
-
-for i in range(len(names_14)):
-    constraints.append([names_14[i] ,[end_time_[i]]*num_location+[-1]])
- 
- # CONSTRAINTS 14
-start_time_ = start_time*3
-for i in range(len(names_14)):
-    constraints.append([names_14[i] ,[start_time_[i]]*num_location+[-1]])
+print((new_names_7))
 
 
 
-# SOLVING + ["L"]*len(time)+ ["G"]*len(time)  + end_time*num_vehicle + start_time*num_vehicle
-my_sense = ["E"]*(names_1.shape[0]-1) + ["L"]*(names_2.shape[0]) + ["E"] * (names_3.shape[0]) + ["E"] *names_4_5.shape[0] + ["E"]*names_6.shape[0] + ["E"] + ["L"]*names_13.shape[0]  +["L"]*len(new_names_7)        + ["E"] + ["L"]*names_14.shape[0] + ["G"]*names_14.shape[0]
+# SOLVING 
+my_sense = ["E"]*(names_1.shape[0]-1) + ["L"]*(names_2.shape[0]) + ["E"] * (names_3.shape[0]) + ["E"] *names_4_5.shape[0] + ["E"]*names_6.shape[0] + ["E"] + ["L"]*names_13.shape[0] 
     
-my_rhs = [1]*(names_1.shape[0]-1) + [float(capity.iat[i]) for i in range(0,names_2.shape[0])] + [1]*names_3.shape[0] + [0] *names_4_5.shape[0] + [1]*names_6.shape[0] +[0] + [1]*names_13.shape[0] + time_ub         + [0] + [0] * names_14.shape[0] + [0]*names_14.shape[0]
+my_rhs = [1]*(names_1.shape[0]-1) + [float(capity.iat[i]) for i in range(0,names_2.shape[0])] + [1]*names_3.shape[0] + [0] *names_4_5.shape[0] + [1]*names_6.shape[0] +[0] + [1]*names_13.shape[0] 
 
 my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]  
 myProblem.linear_constraints.add(lin_expr = constraints, senses = my_sense, rhs = my_rhs, names = my_rownames)
 
 myProblem.solve()
 
+print(myProblem.get_stats())
 try:
     a=myProblem.solution.get_values()
 
@@ -217,6 +181,3 @@ try:
             print((b[i],a[i]))
 except cplex.exceptions.errors.CplexSolverError:
     print("No solution")
-
-
-
