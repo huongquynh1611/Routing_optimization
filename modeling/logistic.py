@@ -279,3 +279,29 @@ for i in range(len(names_14)):
     constraints.append([names_14[i] ,[start_time_[i]]*num_location+[-1]])
 
 
+M=list()
+M_new=[]
+for i in range(len(start_time)):
+    M.append(end_time[i] - start_time[i])
+for i in M:
+    M_new=M_new+[i]*(num_vehicle*(num_location-1))
+
+# print((M_new))
+time_matrix = pd.read_excel(xls, 'Time Matrix')
+time_travel = [float(time_matrix.iat[i,j])  for i in range(0,num_location ) for j in range(1,num_location+1 )]
+print(time_matrix)
+
+time_1 = [float(time_matrix.iat[i,j])  for i in range(0,num_location ) for j in range(1,num_location+1 ) if i != (j-1)]*num_vehicle
+print(time_1)
+# print(len(time_1))  # len = 360
+
+max_M_=list()
+for i in range(len(M_new)):
+    max_M_.append(M_new[i] + time_1[i])
+max_M = [x*100 for x in max_M_]
+print(max_M)
+# print((max_M))
+time_ub = list()
+for i in range(len(max_M)):
+    time_ub.append(max_M[i] - time_1[i])
+print((time_ub))
