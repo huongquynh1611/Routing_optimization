@@ -8,8 +8,8 @@ import numpy as np
 xls = pd.ExcelFile('D:\\Quynh\\Routing_optimization\\modeling\\logistic.xlsx')
 try:
     myProblem= cplex.Cplex()
-    num_vehicle = 1
-    num_location = 4# tính cả depot
+    num_vehicle = 2
+    num_location = 5# tính cả depot
     my_names_ = ["x"+str(i)+str(j) + str(k) for k in range(1,num_vehicle + 1) for i in range(0,num_location) for j in range(0, num_location) ]  
     # print(len(my_names_))
        
@@ -90,7 +90,7 @@ names_6 = np.array(names_6).reshape(num_vehicle,num_location-1)
 for i in range(0,names_6.shape[0]):
     constraints.append([names_6[i],[1]*names_6.shape[1]])
 
-
+print(names_6)
 
 # CONSTRAINTS (10)    X_IJK = 0 IF I=J , FOR ALL I,J
 names_10 = ["x" +str(i) + str(i) + str(k)  for i in range(0, num_location)    for k in range(1,num_vehicle+1)]
@@ -177,11 +177,11 @@ constraints.append([["s01"],[1]])
 
 # for i in range(len(new_names_7)):
 #     constraints.append([  new_names_7[i],[1]*len(new_names_7)+[float(max_M[i])]+[-1]*len(new_names_7)])
-print(constraints)
+
 # SOLVING 
 my_sense = ["E"]*(names_1.shape[0]-1) + ["L"]*(names_2.shape[0]) + ["E"] * (names_3.shape[0]) + ["E"] *names_4_5.shape[0] + ["E"]*names_6.shape[0] + ["E"] + ["L"]*names_13.shape[0]  + ["L"]*len(time) + ["G"]*len(time) +["E"]  #+ ["L"]*len(new_names_7)
 
-my_rhs = [1]*(names_1.shape[0]-1) + [float(capity.iat[i]) for i in range(0,names_2.shape[0])] + [1]*names_3.shape[0] + [0] *names_4_5.shape[0] + [1]*names_6.shape[0] +[0] + [1]*names_13.shape[0]  + end_time + start_time+[0] #+ time_ub
+my_rhs = [1]*(names_1.shape[0]-1) + [float(capity.iat[i]) for i in range(0,names_2.shape[0])] + [1]*names_3.shape[0] + [0] *names_4_5.shape[0] + [1]*names_6.shape[0] +[0] + [1]*names_13.shape[0]  + end_time*num_vehicle + start_time*num_vehicle+[0] #+ time_ub
 print(my_sense)
 my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]  
 myProblem.linear_constraints.add(lin_expr = constraints, senses = my_sense, rhs = my_rhs, names = my_rownames)
