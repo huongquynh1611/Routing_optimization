@@ -44,7 +44,7 @@ constraints = list()  # list constraints includes var and coef
 #   CONSTRAINTS (2) ONLY ONE VEHICLE SERVICE ONE CUSTOMER ( CUSTOMER 1,2,..,9)
 names_1 = ["x"+str(i)+str(j) + str(k) for i in range(0, num_location) for k in range(1,num_vehicle+1)  for j in range(0, num_location)  ]
 names_1 = np.array(names_1).reshape(int(len(names_1)/(num_location*num_vehicle)),(num_location*num_vehicle))  # (10,40)
-# print(names_1)
+print(names_1)
 
 for i in range(1,names_1.shape[0]):
     constraints.append([names_1[i],[1.0]*names_1.shape[1]])
@@ -90,7 +90,7 @@ names_6 = np.array(names_6).reshape(num_vehicle,num_location-1)
 for i in range(0,names_6.shape[0]):
     constraints.append([names_6[i],[1]*names_6.shape[1]])
 
-print(names_6)
+
 
 # CONSTRAINTS (10)    X_IJK = 0 IF I=J , FOR ALL I,J
 names_10 = ["x" +str(i) + str(i) + str(k)  for i in range(0, num_location)    for k in range(1,num_vehicle+1)]
