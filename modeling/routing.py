@@ -121,67 +121,67 @@ for i in range(0,len(time)):
 
 constraints.append([["s01"],[1]])  
 # CONSTRAINTS (7) 
-# names_8 = ["s" + str(i ) + str(k)for k in range(1,num_vehicle+1) for i in range(0,num_location) if i != 0]
-# names_8 = [i for i in names_8 for j in range(num_location)] 
+names_8 = ["s" + str(i ) + str(k)for k in range(1,num_vehicle+1) for i in range(0,num_location) if i != 0]
+names_8 = [i for i in names_8 for j in range(num_location)] 
 
-# names_9 = ["s" + str(i ) + str(k)for k in range(1,num_vehicle+1) for i in range(0,num_location) ]
+names_9 = ["s" + str(i ) + str(k)for k in range(1,num_vehicle+1) for i in range(0,num_location) ]
 
-# names_9 = [names_9[i:i+num_location] for i in range(0,len(names_9),num_location) for j in range(num_location-1)]
+names_9 = [names_9[i:i+num_location] for i in range(0,len(names_9),num_location) for j in range(num_location-1)]
 
-# names_9 =  [i for j in names_9 for i in j]
+names_9 =  [i for j in names_9 for i in j]
 
-# _my_names= ["x"+str(i)+str(j) + str(k) for k in range(1,num_vehicle + 1) for i in range(1,num_location) for j in range(0, num_location) ]
-# names_7 = list()
-# for i in range(0,len(names_8)):
-#     names_7.append(names_8[i])
-#     names_7.append(_my_names[i])
-#     names_7.append(names_9[i])
-# names_7 = np.array(names_7).reshape(int(len(names_7)/3),3)
+_my_names= ["x"+str(i)+str(j) + str(k) for k in range(1,num_vehicle + 1) for i in range(1,num_location) for j in range(0, num_location) ]
+names_7 = list()
+for i in range(0,len(names_8)):
+    names_7.append(names_8[i])
+    names_7.append(_my_names[i])
+    names_7.append(names_9[i])
+names_7 = np.array(names_7).reshape(int(len(names_7)/3),3)
 
-# import collections
+import collections
 
-# new_names_7 = list()
-# for i in names_7:
-#     new = [item for item,count in collections.Counter(i).items() if count > 1]
-#     if len(new) == 0:
-#         new_names_7.append(list(i))
-# new_names_7 = np.array(new_names_7)  
-
-
-# M=list()
-# M_new=[]
-# for i in range(1,len(start_time)):
-#     M.append(end_time[i] - start_time[i])
-# for i in M:
-#     M_new=M_new+[i]*(num_vehicle*(num_location-1))
-
-# print((M_new))
-# time_matrix = pd.read_excel(xls, 'Time Matrix')
-# time_travel = [float(time_matrix.iat[i,j])  for i in range(0,num_location ) for j in range(1,num_location+1 )]
+new_names_7 = list()
+for i in names_7:
+    new = [item for item,count in collections.Counter(i).items() if count > 1]
+    if len(new) == 0:
+        new_names_7.append(list(i))
+new_names_7 = np.array(new_names_7)  
 
 
-# time_1 = [float(time_matrix.iat[i,j])  for i in range(1,num_location ) for j in range(1,num_location+1 ) if i != (j-1)]*num_vehicle
-# print(time_1)
+M=list()
+M_new=[]
+for i in range(1,len(start_time)):
+    M.append(end_time[i] - start_time[i])
+for i in M:
+    M_new=M_new+[i]*(num_vehicle*(num_location-1))
+
+print((M_new))
+time_matrix = pd.read_excel(xls, 'Time Matrix')
+time_travel = [float(time_matrix.iat[i,j])  for i in range(0,num_location ) for j in range(1,num_location+1 )]
 
 
-# max_M_=list()
-# for i in range(len(M_new)):
-#     max_M_.append(M_new[i] + time_1[i])
-# max_M = [x*100 for x in max_M_]
+time_1 = [float(time_matrix.iat[i,j])  for i in range(1,num_location ) for j in range(1,num_location+1 ) if i != (j-1)]*num_vehicle
+print(time_1)
 
 
-# time_ub = list()
-# for i in range(len(max_M)):
-#     time_ub.append(max_M[i] - time_1[i])
+max_M_=list()
+for i in range(len(M_new)):
+    max_M_.append(M_new[i] + time_1[i])
+max_M = [x*100 for x in max_M_]
 
 
-# for i in range(len(new_names_7)):
-#     constraints.append([  new_names_7[i],[1]*len(new_names_7)+[float(max_M[i])]+[-1]*len(new_names_7)])
+time_ub = list()
+for i in range(len(max_M)):
+    time_ub.append(max_M[i] - time_1[i])
+
+
+for i in range(len(new_names_7)):
+    constraints.append([  new_names_7[i],[1]*len(new_names_7)+[float(max_M[i])]+[-1]*len(new_names_7)])
 
 # SOLVING 
-my_sense = ["E"]*(names_1.shape[0]-1) + ["L"]*(names_2.shape[0]) + ["E"] * (names_3.shape[0]) + ["E"] *names_4_5.shape[0] + ["E"]*names_6.shape[0] + ["E"] + ["L"]*names_13.shape[0]  + ["L"]*len(time) + ["G"]*len(time) +["E"]  #+ ["L"]*len(new_names_7)
+my_sense = ["E"]*(names_1.shape[0]-1) + ["L"]*(names_2.shape[0]) + ["E"] * (names_3.shape[0]) + ["E"] *names_4_5.shape[0] + ["E"]*names_6.shape[0] + ["E"] + ["L"]*names_13.shape[0]  + ["L"]*len(time) + ["G"]*len(time) +["E"]  + ["L"]*len(new_names_7)
 
-my_rhs = [1]*(names_1.shape[0]-1) + [float(capity.iat[i]) for i in range(0,names_2.shape[0])] + [1]*names_3.shape[0] + [0] *names_4_5.shape[0] + [1]*names_6.shape[0] +[0] + [1]*names_13.shape[0]  + end_time*num_vehicle + start_time*num_vehicle+[0] #+ time_ub
+my_rhs = [1]*(names_1.shape[0]-1) + [float(capity.iat[i]) for i in range(0,names_2.shape[0])] + [1]*names_3.shape[0] + [0] *names_4_5.shape[0] + [1]*names_6.shape[0] +[0] + [1]*names_13.shape[0]  + end_time*num_vehicle + start_time*num_vehicle+[0] + time_ub
 print(my_sense)
 my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]  
 myProblem.linear_constraints.add(lin_expr = constraints, senses = my_sense, rhs = my_rhs, names = my_rownames)
