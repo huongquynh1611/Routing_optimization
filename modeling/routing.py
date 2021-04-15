@@ -9,7 +9,7 @@ xls = pd.ExcelFile('D:\\Quynh\\Routing_optimization\\modeling\\logistic.xlsx')
 try:
     myProblem= cplex.Cplex()
     num_vehicle = 2
-    num_location = 5# tính cả depot
+    num_location = 7# tính cả depot
     my_names_ = ["x"+str(i)+str(j) + str(k) for k in range(1,num_vehicle + 1) for i in range(0,num_location) for j in range(0, num_location) ]  
     # print(len(my_names_))
        
@@ -44,7 +44,7 @@ constraints = list()  # list constraints includes var and coef
 #   CONSTRAINTS (2) ONLY ONE VEHICLE SERVICE ONE CUSTOMER ( CUSTOMER 1,2,..,9)
 names_1 = ["x"+str(i)+str(j) + str(k) for i in range(0, num_location) for k in range(1,num_vehicle+1)  for j in range(0, num_location)  ]
 names_1 = np.array(names_1).reshape(int(len(names_1)/(num_location*num_vehicle)),(num_location*num_vehicle))  # (10,40)
-print(names_1)
+
 
 for i in range(1,names_1.shape[0]):
     constraints.append([names_1[i],[1.0]*names_1.shape[1]])
@@ -147,7 +147,7 @@ for i in names_7:
         new_names_7.append(list(i))
 new_names_7 = np.array(new_names_7)  
 
-
+print(new_names_7)
 M=list()
 M_new=[]
 for i in range(1,len(start_time)):
@@ -161,14 +161,13 @@ time_travel = [float(time_matrix.iat[i,j])  for i in range(0,num_location ) for 
 
 
 time_1 = [float(time_matrix.iat[i,j])  for i in range(1,num_location ) for j in range(1,num_location+1 ) if i != (j-1)]*num_vehicle
-print(time_1)
 
 
 max_M_=list()
 for i in range(len(M_new)):
     max_M_.append(M_new[i] + time_1[i])
 max_M = [x*100 for x in max_M_]
-
+print(max_M)
 
 time_ub = list()
 for i in range(len(max_M)):
@@ -182,12 +181,12 @@ for i in range(len(new_names_7)):
 my_sense = ["E"]*(names_1.shape[0]-1) + ["L"]*(names_2.shape[0]) + ["E"] * (names_3.shape[0]) + ["E"] *names_4_5.shape[0] + ["E"]*names_6.shape[0] + ["E"] + ["L"]*names_13.shape[0]  + ["L"]*len(time) + ["G"]*len(time) +["E"]  + ["L"]*len(new_names_7)
 
 my_rhs = [1]*(names_1.shape[0]-1) + [float(capity.iat[i]) for i in range(0,names_2.shape[0])] + [1]*names_3.shape[0] + [0] *names_4_5.shape[0] + [1]*names_6.shape[0] +[0] + [1]*names_13.shape[0]  + end_time*num_vehicle + start_time*num_vehicle+[0] + time_ub
-print(my_sense)
+
 my_rownames = ["c"+str(i) for i in range(1,len(my_rhs)+1)]  
 myProblem.linear_constraints.add(lin_expr = constraints, senses = my_sense, rhs = my_rhs, names = my_rownames)
 
 myProblem.solve()
-print(myProblem.variables.get_names())
+
 
 try:
     a=myProblem.solution.get_values()
