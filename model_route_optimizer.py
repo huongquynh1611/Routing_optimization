@@ -1,3 +1,4 @@
+from asyncio.constants import LOG_THRESHOLD_FOR_CONNLOST_WRITES
 import pandas as pd 
 import math
 import numpy as np
@@ -26,17 +27,14 @@ class ModelObjects:
     def __init__(self):
         self.VAR = []
     def create_tuples(self):
-        self.model.TCapacity = namedtuple('TCapacity',["TruckID",'Capacity','Units','Depot_ID'])
-        self.model.TDepot    = namedtuple('TDepot',['ID','Longitude','Latitude','TimeService'])
-        self.model.TEmployee = namedtuple('TEmployee',['EmployeeID','Type','StartTime','EndTime','Depot_ID'])
-        self.model.TOrder   = namedtuple('TOrder',['OrderID','StoreID','Case','Receipt_Time_Start','Receipt_Time_End'])
-        self.model.TStore   = namedtuple('TStore',['ID','Longitude','Latitude','Time_Service'])       
-        self.model.TConvert = namedtuple('TConvert',['From','To','Rate'])
+        self.model.TDistanceTime = namedtuple('TDistanceTime',["cus_from",'cus_to','distance','time'])
+        self.model.TCostLateness   = namedtuple('TCostLateness',['customerid','late_delivery_cost'])
+        self.model.TOrder = namedtuple('TOrder',['customerid','earliest_delivery','lastest_delivery','volume'])
+        self.model.TDriver   = namedtuple('TDriver',['driverid','trucksize'])
+        self.model.TTruckSize   = namedtuple('TTruckSize',['trucksize','capacity','quantity'])       
+        self.model.TRoster = namedtuple('TRoster',['driverid','starttime','endtime'])
         # tuple for variables 
-        self.model.TROUTE   = namedtuple('TROUTE',['from_store','to_store','distance','vehicle_id','depot_id'])
-        self.model.TRoute   = namedtuple('TRoute',['var','name','from_store','to_store','distance','day','vehicle_id','depot_id'])
-        self.model.TTime    = namedtuple('TTime',['var','name','store','order_id','start_time','end_time','employee_id','type','case','depot_id']) 
-        self.model.TVar     = namedtuple('TVar',['order_id','store_id',"receipt_start",'receipt_end','route','time','case'])
+        
         return
     def read_input_data(self):
         file = open(self.json_input,'r')
@@ -44,165 +42,140 @@ class ModelObjects:
         file.close()
         self.input_json = json.loads(contents)
     def load_input_data(self):
-        self.model.df_capacity = json_normalize(self.input_json['Capacity'])
-        self.model.df_employee = json_normalize(self.input_json['Employee'])
-        self.model.df_convert  = json_normalize(self.input_json['Convert'])
-        self.model.df_order    = json_normalize(self.input_json['Order'])
-        self.model.df_store    = json_normalize(self.input_json['Store'])
-        self.model.df_depot    = json_normalize(self.input_json['Depot'])  
-        self.model.df_store    = pd.concat([self.model.df_store,self.model.df_depot])
+        self.df_distancetime = json_normalize(self.input_json['Distance_time'])
+        self.df_costlateness = json_normalize(self.input_json['UnitCostLateness'])
+        self.df_wait_cost  = json_normalize(self.input_json['DriverWaitTimeCost'])
+        self.df_order    = json_normalize(self.input_json['OrderDetails']) 
+        self.df_driver    = json_normalize(self.input_json['Driver'])
+        self.df_trucksize    = json_normalize(self.input_json['Truck size'])  
+        self.df_roster   = json_normalize(self.input_json['Roster_Profile'])
       
-        # convert to datetime
-        self.model.df_order['Receipt_Time_Start'] = pd.to_datetime(self.model.df_order['Receipt_Time_Start'],format='%Y-%d-%m %H:%M:%S')
-        self.model.df_order['Receipt_Time_End'] = pd.to_datetime(self.model.df_order['Receipt_Time_End'],format='%Y-%d-%m %H:%M:%S')
-        self.model.day_list = list(set(self.model.df_order.Receipt_Time_Start.dt.strftime('%Y-%m-%d')))
-        
-        self.model.df_employee['StartTime'] = pd.to_datetime(self.model.df_employee['StartTime'],format='%Y-%d-%m %H:%M:%S')
-        self.model.df_employee['EndTime'] = pd.to_datetime(self.model.df_employee['EndTime'],format='%Y-%d-%m %H:%M:%S')
-        self.model.df_order = self.model.df_order.sort_values(['Receipt_Time_Start','Receipt_Time_End'])
-        self.model.anchor_date      = pd.to_datetime(self.model.df_employee['StartTime']).min()
-        # convert to num
-        self.list_day = list(set(self.model.df_order.Receipt_Time_Start.dt.strftime('%Y-%m-%d')))
-        self.convert_time_to_num(self.model.df_order, 'Receipt_Time_Start')
-        self.convert_time_to_num(self.model.df_order, 'Receipt_Time_End')
-        self.convert_time_to_num(self.model.df_employee, 'StartTime')
-        self.convert_time_to_num(self.model.df_employee, 'EndTime')
-        
+        # convert to datetime format 
+        self.anchor_date      = pd.to_datetime(self.df_roster['Start_time'].min() )
+        self.df_order['EarliestDeliveryTime'] = pd.to_datetime(self.df_order['EarliestDeliveryTime'])
+        self.df_order['LatestDeliveryTime'] = pd.to_datetime(self.df_order['LatestDeliveryTime'])
+        self.df_roster['Start_time'] = pd.to_datetime(self.df_roster['Start_time'])
+        self.df_roster['End_time'] = pd.to_datetime(self.df_roster['End_time'])
+
+    def _convert_dt_to_num(self):
+        def _convert_time_to_num(df: pd.DataFrame, col):
+            "Applying date2num to an entire column"
+            df.loc[:, col] = df[col].map(self.date_to_num)
+            
+        _convert_time_to_num(
+            self.df_order, 'EarliestDeliveryTime')
+        _convert_time_to_num(
+            self.df_order, 'LatestDeliveryTime')
+        _convert_time_to_num(
+            self.df_roster, 'Start_time')
+        _convert_time_to_num(
+            self.df_roster, 'End_time')
     def load_model_object(self):
-        CAPACITY = [self.model.TCapacity(*row) for _,row in self.model.df_capacity.iterrows()]
-        EMPLOYEE = [self.model.TEmployee(*row) for _,row in self.model.df_employee.iterrows()]
-        CONVERT  = [self.model.TConvert(*row) for _,row in self.model.df_convert.iterrows()]
-        ORDER    = [self.model.TOrder(*row) for _,row in self.model.df_order.iterrows()]
-        STORE    = [self.model.TStore(*row) for _,row in self.model.df_store.iterrows()]
-        DEPOT    = [self.model.TDepot(*row) for _,row in self.model.df_depot.iterrows()]
+        self.vehicle_speed = 50 # km/h 
+        self.unload_rate = 100 # units per hours
+        self._convert_dt_to_num()
         
-        self.model.capacity = CAPACITY 
-        self.model.employee = EMPLOYEE 
-        self.model.convert = CONVERT
-        self.model.order = ORDER 
-        self.model.store = STORE 
-        self.model.depot = DEPOT
-    def date2num(self, dt):
-        return  int((dt - self.model.anchor_date).total_seconds() / 3600)
-     
-    def convert_time_to_num(self, df, col):
-        df.loc[:, col] = list(map(self.date2num, df[col]))
+        self.wait_time_cost = self.df_wait_cost['DriverWaitTimeCost'][0]
+       
+        DISTIME       = [self.model.TDistanceTime(*row) for _,row in self.df_distancetime.iterrows()]
+        COSTLATENESS  = [self.model.TCostLateness(*row) for _,row in self.df_costlateness.iterrows()]
+        ORDER        = [self.model.TOrder(*row) for _,row in self.df_order.iterrows()]
+        DRIVER        = [self.model.TDriver(*row) for _,row in self.df_driver.iterrows()]
+        TRUCK         = [self.model.TTruckSize(*row) for _,row in self.df_trucksize.iterrows()]
+        ROSTER        = [self.model.TRoster(*row) for _,row in self.df_roster.iterrows()] 
+        
+        
+        
+        self.disancetime = DISTIME 
+        self.costlateness = COSTLATENESS 
+        self.order = ORDER
+        self.driver = DRIVER 
+        self.truck = TRUCK 
+        self.roster = ROSTER
+    
 
-    def set_depot(self):
-        depot_id = self.model.df_depot.ID.values
-        self.depot = dict( ( depot, (float(self.model.df_depot.loc[self.model.df_depot.ID == depot, 'Longitude'].values[0]), float(self.model.df_depot.loc[self.model.df_depot.ID == depot, 'Latitude'].values[0])) ) for depot in depot_id)
+        self.get_dist_time = {(t.cus_from,t.cus_to):t.time for t in self.disancetime}
+        self.get_order_volume = {t.customerid:t.volume for t in self.order}
+        
 
-    def set_time(self):
-        self.model.BEGIN_DATETIME = pd.to_datetime(self.model.df_order.Receipt_Time_Start).min()
-    def convert_to_datetime(self,hour):
-        beginning_date = self.model.anchor_date
+        # Object for driver-deliveries
+        self.unique_cust_list = list(self.df_distancetime.cus_to.unique())
+        self.unique_cust_list.remove('DEPOT01')
+        self.driver_list = list(self.df_driver.driver_id.unique())
+        
+        #Object for truck-driver assignment
+        self.driver_truck_assign = pd.merge(self.df_driver,self.df_trucksize,left_on='qualification',
+                                                  right_on='Truck').drop('qualification',axis=1)
+    
+       
+        self.truck_get = defaultdict(lambda:None,{t.trucksize:t for t in self.truck})
+        
+    
+
+
+    def date_to_num(self, dt:datetime):
+        "Convert date to numeric"
+        return int((dt - self.anchor_date).total_seconds() / 3600)
+
+    def num_to_datetime(self, hour):
+        "Convert hour(int) to datetime based on anchor date"
+        beginning_date = self.anchor_date
         i = math.floor(hour / 24)
-        j = int(hour - 24 * i)
+        j = hour - 24 * i
         date = beginning_date + timedelta(days=i)
         date_time = date + timedelta(hours=j)
         return date_time
-    def set_conversation_rate(self):
-        self.RATE_conversation = self.model.df_convert.loc[(self.model.df_convert.From =='Pallets')]['Rate'].values[0]
-    def get_distance(self,lat1,long1,lat2,long2):
+    
+    
+    def is_overlap(self, a, b, r=0):
+        """
+        a: tuple of range, ex (1,5)
+        b: tuple of range, ex (4,10)
+        r: overlap size, ex 1
+        return True
+        """
+        return a[0] < b[1]+r and b[0] < a[1]+r
+    def get_orders_by_range(self, start_time, end_time):
+        a = (start_time, end_time)
+        return [order 
+                for order in self.order 
+                if self.is_overlap(a, (order.earliest_delivery, order.lastest_delivery))]
+    
+    
         
-        return (abs(math.sqrt((pow(lat1 - lat2,2))+ (pow(long1-long2,2)))))
-        
-    def get_position(self):
-        self.positions = dict( ( store, (float(self.model.df_store.loc[self.model.df_store.ID == store, 'Longitude'].values[0]), float(self.model.df_store.loc[self.model.df_store.ID == store, 'Latitude'].values[0])) ) for store in self.model.df_store.ID)
-        
-    def get_all_route(self):
-        all_route = []
-        store_list = list(self.model.df_store.ID)
-        vehicle_list = list(self.model.df_capacity.Truck_ID)
-        for i in store_list:
-            for j in store_list:
-                for k in vehicle_list:
-                    if i != j:
-                        position_dict = self.positions 
-                        long1 = position_dict[i][0]
-                        lat1  = position_dict[i][1]
-                        long2 = position_dict[j][0]
-                        lat2 = position_dict[j][1]
-                        distance = self.get_distance(lat1,long1,lat2,long2)
-                        depot_id = list(self.model.df_capacity[self.model.df_capacity.Truck_ID == k]['Depot_ID'])[0]
-                        if i not in ['Dep_01','Dep_02'] or ( i == depot_id):
-                            all_route.append((i,j,distance,k,depot_id))
-        self.model.df_all_route = pd.DataFrame(all_route,columns=['FromStore','ToStore','Distance','VehicleID','Depot_ID'])
-        self.model.all_route = [self.model.TROUTE(*row) for _,row in self.model.df_all_route.iterrows()]
-      
-    def convert_to_pallet(self):
-        return
-        
-class SetupData(ModelObjects):
+class SetupData(ModelObjects): 
     def __init__(self,data,model: Model):
         self.json_input = data
         self.model = model 
-        self.model.route_obj = []
-        self.model.time_obj = []
     def create_model_objects(self):
         self.read_input_data()
         self.load_input_data()
         self.create_tuples()
         self.load_model_object()
-        self.set_time()
-        self.set_conversation_rate()
-        self.get_position()
-        self.set_depot()  
-        self.get_all_route() 
-        self.create_route_var()   
-        self.create_time_var()
-   
-   
-        
+        self.create_var_route()
     
-    def create_route_var(self):
         
-        self.ROUTE = []
-        for day in self.model.day_list:
-            for route in self.model.all_route:
-                
-                from_store = route.from_store
-                to_store   = route.to_store
-                vehicle    = route.vehicle_id
-                distance   = route.distance 
-                depot_id   = route.depot_id
-                
-                name = from_store + '_' + to_store + '_' + vehicle +'_route'
-                var = self.model.binary_var()
-                self.ROUTE.append((var,name,from_store,to_store,distance,day,vehicle,depot_id))
-        self.model.route_obj = [self.model.TRoute(*row) for row in self.ROUTE]
-        # C1: each vehicle drive from only 1 store 1 time a day 
-        list_from_store_each_day = {} 
-        for i in self.model.route_obj:
-            key = i.from_store + i.day
-            if not key in list_from_store_each_day: 
-                list_from_store_each_day[key] = []
-            list_from_store_each_day[key].append(i)
-        self.model.list_from_store_each_day = list_from_store_each_day
-        # C2: each vehicle drive to only 1 store 1 time a day 
-        list_to_store_each_day = {} 
-        for i in self.model.route_obj:
-            key = i.to_store + i.day
-            if not key in list_to_store_each_day: 
-                list_to_store_each_day[key] = []
-            list_to_store_each_day[key].append(i)
-        self.model.list_to_store_each_day = list_to_store_each_day
-        # C3: the number of order per store per day 
-        list_number_order = {}
-        for order in self.model.order: 
-            key = str(self.convert_to_datetime( order.Receipt_Time_Start).date()) + '_' + order.StoreID
-            if not key in list_number_order :
-                list_number_order[key] = []
-            list_number_order[key].append(order)
-        for i in list_number_order:
-            list_number_order[i] = len(list_number_order[i])
-        for i in list_number_order: 
-            print('------>',i,list_number_order[i])
+ 
+    def create_var_route(self):
+        route_var = []
+        for roster in self.roster:
+            
+            order_avai = self.get_orders_by_range(roster.starttime, roster.endtime) 
+            for order_from in order_avai: 
+                for order_to in order_avai: 
+                    if order_from==order_to:
+                        continue
+                    var = self.model.binary_var()
+                    waiting_time = self.model.continuous_var() 
+                    arrival_time = self.model.continuous_var() 
+                    loading_vehicle = self.model.continuous_var() 
+                    volume = roster.volume
+                    customerid = roster.customerid
+                    earliest_time = roster.earliest_delivery 
+                    latest_time = roster.lastest_delivery
+                    
         
 
-        
-         
-    def create_time_var(self):
         return
         
     
@@ -212,24 +185,10 @@ class SetupConstraints(ModelObjects):
     def __init__(self,data,model:Model):
         self.input_json = data 
         self.model = model
-    def route_constraint(self):
-        # C1: each vehicle drive from only 1 store 1 time a day 
-        list_from_store_each_day = self.model.list_from_store_each_day
-        for i in list_from_store_each_day:
-            self.model.add_constraint(self.model.sum(v.var for v in list_from_store_each_day[i] )   == 1)
-        # C2: each vehicle drive to only 1 store 1 time a day 
-        list_to_store_each_day = self.model.list_to_store_each_day 
-        for i in list_to_store_each_day:
-            self.model.add_constraint(self.model.sum(v.var for v in list_to_store_each_day[i]) == 1)
-        
-        
-        
-        return
-            
-
+    
 
     def add_constraints(self):
-        self.route_constraint()
+        
         print('Finished constraints')
 class SetupObjectives(ModelObjects):
     def __init__(self,model: Model):
