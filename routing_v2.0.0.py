@@ -9,17 +9,18 @@ from collections import namedtuple
 import datetime
 from lib2to3.pgen2 import driver
 from pydoc import doc
+from random import randrange
 from sqlite3 import Timestamp
 from typing import List
 from tqdm import tqdm
 import pandas as pd
 from docplex.mp.model import Model
 from docplex.util.environment import get_environment
-from functools import reduce
+from functools import reduce, total_ordering
 import numpy as np
 import uuid
 import math
-from datetime import timedelta
+from datetime import date, timedelta
 import sys
 import time
 import json
@@ -27,6 +28,8 @@ from pandas import json_normalize
 import requests
 import os
 from collections import defaultdict
+from docplex.mp.solution import SolveSolution
+
 
 
 # TWaitCost = namedtuple("TWaitCost", ['wait_cost'])
@@ -38,11 +41,14 @@ TOrderDetail = namedtuple("TOrderDetails", ['customer','earliest_delivery_time',
 
 TDelivery = namedtuple("TDelivery", ['driver_id', 'current_cus', 'previous_cus', 'assigned_var','arrive_time_var','remained_volume_var','capacity_truck']) # , ''
         
-class ModelObjects:
-    def __init__(self, data, model: Model):
-        self._data = data
+class ModelObject:
+    def __init__(self, model: Model):
         self.cplex = model
         
+        ##
+        self.total_distance = 0
+        self.total_wating_time = 0
+        self.slack_orders = []
         
     def is_overlap(self, a, b, r=0):
         """
@@ -53,8 +59,8 @@ class ModelObjects:
         """
         return a[0] < b[1]+r and b[0] < a[1]+r
     
-    def load_input_data_excel(self):
-        xlsx = pd.ExcelFile(self._data)
+    def load_input_data_excel(self,input_file):
+        xlsx = pd.ExcelFile(input_file)
         self.df_wait_cost = pd.read_excel(xlsx,'DriverWaitTimeCost')
         self.df_dist_time = pd.read_excel(xlsx,'Distance_time')
         self.df_lateness_cost = pd.read_excel(xlsx,'UnitCostLateness')
@@ -102,6 +108,7 @@ class ModelObjects:
         self.dist_time = [TDistTime(*row) for _,row in self.df_dist_time.iterrows()]
         self.get_dist_time = {(t.customer_from,t.customer_to):t.time for t in self.dist_time}
         self.orders_list = [TOrderDetail(*row) for _,row in self.df_order.iterrows()]
+        self.orders_list = self.orders_list[:10]
         self.get_order_volume = {t.customer:t.volume for t in self.orders_list}
         self.late_cost = [TLatenessCost(*row) for _,row in self.df_lateness_cost.iterrows()]
         
@@ -127,60 +134,63 @@ class ModelObjects:
                 if self.is_overlap(a, (order.earliest_delivery_time, order.latest_delivery_time))]
         
     def get_time(self,cusfrom,custo):
-        print([d.time for d in self.dist_time if d.customer_from == cusfrom and d.customer_to == custo])
-        return int([d.time for d in self.dist_time if d.customer_from == cusfrom and d.customer_to == custo][0]) 
+        try:
+            return int([d.time for d in self.dist_time if d.customer_from == cusfrom and d.customer_to == custo][0]) 
+        except:
+            print("error get_time: ", cusfrom,custo)
     def get_distance(self,cusfrom,custo ):
-        return float([d.distance for d in self.dist_time if d.customer_from == cusfrom and d.customer_to == custo][0])
-        
-    def create_routes(self):
-        self.ALL_DELIVERIES = []
-        self.deliveries_by_roster:defaultdict[TOrderDetail,list[TDelivery]] = defaultdict(lambda: list())
-        self.deliveries_by_order:defaultdict[TOrderDetail,list[TDelivery]] = defaultdict(lambda: list())
-        self.t_depot = TOrderDetail(self.depot_key,0,0,0)
-        
-        for roster in self.roster_list:
-            get_truck = self.driver_truck_assign[self.driver_truck_assign['driver_id']==roster.driver]
-          
-            truck_capacity = int(get_truck.Capacity)
-            driver_id = get_truck.driver_id
-            self.deliveries_by_roster[roster] = []
-            order_list = self.get_orders_by_range(roster.start_time, roster.end_time) 
+        try:
+            return float([d.distance for d in self.dist_time if d.customer_from == cusfrom and d.customer_to == custo][0])
+        except:
+            print("error get_distance: ", cusfrom,custo)
 
-            
+    def create_routes(self):
+        self.ALL_DELIVERIES:List[TDelivery] = []
+        self.deliveries_by_roster:defaultdict[TOrderDetail,list[TDelivery]] = defaultdict(lambda: list())
+        self.inbound_deliveries_by_order:defaultdict[TOrderDetail,list[TDelivery]] = defaultdict(lambda: list())
+        self.outbound_deliveries_by_order:defaultdict[TOrderDetail,list[TDelivery]] = defaultdict(lambda: list())
+        self.deliveries_by_driver:defaultdict[str,list[TDelivery]] = defaultdict(lambda: list())
+        # ----------------------------------------------------------------------------------
+        self.t_depot = TOrderDetail(self.depot_key,0,0,0)
+        for roster in self.roster_list:
+            get_truck = self.driver_truck_assign.loc[self.driver_truck_assign['driver_id']==roster.driver,:]
+            truck_capacity = int(list(get_truck['Capacity'])[0])
+            driver_id = list(get_truck['driver_id'])[0]
+            order_list = self.get_orders_by_range(roster.start_time, roster.end_time) 
             order_list = order_list + [self.t_depot]
             for order_previous in order_list: 
                 for order_current in order_list:
-                    
                     if order_previous==order_current:
                         continue
-                    
                     t=TDelivery(
-                        assigned_var=self.cplex.binary_var(),
+                        assigned_var=self.cplex.binary_var(f"D_{driver_id}_{order_previous.customer}_{order_current.customer}"),
                         arrive_time_var=self.cplex.continuous_var(),
-                        current_cus=order_current,
+                        current_cus=order_current.customer,
                         remained_volume_var=self.cplex.continuous_var(),
                         driver_id=driver_id,
-                        previous_cus=order_previous,
+                        previous_cus=order_previous.customer,
                         capacity_truck = truck_capacity
-                        
                     )   
                     
+                    # ---------------------------------------------------
                     self.ALL_DELIVERIES.append(t)
                     self.deliveries_by_roster[roster].append(t)
-                    self.deliveries_by_order[order_current].append(t)
-                    self.deliveries_by_order[order_previous].append(t)
+                    self.inbound_deliveries_by_order[order_current.customer].append(t)
+                    self.outbound_deliveries_by_order[order_previous.customer].append(t)
+                    self.deliveries_by_driver[driver_id].append(t)
+
         
-
-  
-
-
-           
-class SetupData():
-    def __init__(self, model: ModelObjects):
-        self.model = model
-        self.validation_issues = {}
+        
     
-        self.model.load_input_data_excel()
+class SetupData():
+    def __init__(self, model: ModelObject):
+        self.model = model
+        
+        #------------------------------
+        self.validation_issues = {}
+        
+    def setup_data(self,input_file):
+        self.model.load_input_data_excel(input_file)
         # self.validate_data()
         self.model.load_model_objects()
         self.model.create_routes()
@@ -188,139 +198,249 @@ class SetupData():
 
 
 class SetupConstraints():
-    def __init__(self, model: ModelObjects):
+    def __init__(self, model: ModelObject):
         self.model = model
         self.cplex=self.model.cplex
 
     def add_order_constraint(self):
         "Creating constraints"
-        for order in self.model.orders_list:
-            
-            list_delivering = self.model.deliveries_by_order[order]
+        for order in tqdm(self.model.orders_list):
+            get_outbound = [d.assigned_var for d in self.model.outbound_deliveries_by_order[order.customer]]
+            get_inbound = [d.assigned_var for d in self.model.inbound_deliveries_by_order[order.customer]]
 
-            get_outbound = [d.assigned_var for d in list_delivering if d.current_cus==order.customer]
-            get_inbound = [d.assigned_var for d in list_delivering if d.previous_cus==order.customer]
+           
+            id =  len(self.model.slack_orders)
+            slack = self.cplex.binary_var(name=f"slack_{id}")
+            self.model.slack_orders.append(slack)
             
-            if len(get_inbound)>0:
-                self.cplex.add_constraint(self.cplex.sum(get_inbound)==1)
-            if len(get_outbound)>0:
-                self.cplex.add_constraint(self.cplex.sum(get_outbound)==1)
+            sum_inbound = self.cplex.sum(get_inbound)
+            sum_outbound = self.cplex.sum(get_outbound)
+            
+            if len(get_inbound)==0 or len(get_outbound)==0:
+                self.cplex.add_constraint(slack==1)
+                continue
+
+            self.cplex.add_indicator(slack, sum_outbound==0, 1)
+            self.cplex.add_indicator(slack, sum_inbound==0, 1)
+            
+            self.cplex.add_indicator(slack, sum_outbound==1, 0)
+            self.cplex.add_indicator(slack, sum_inbound==1, 0)
+            
+            
+            group_by_driver = defaultdict(lambda: list())
+            for d in self.model.outbound_deliveries_by_order[order.customer]:
+                group_by_driver[d.driver_id].append(d.assigned_var)
+            for d in self.model.inbound_deliveries_by_order[order.customer]:
+                group_by_driver[d.driver_id].append(d.assigned_var)
+                
+            # only one driver can take this order
+            self.cplex.add_indicator(slack, self.cplex.sum(self.cplex.logical_or(*_l) for _,_l in group_by_driver.items())==1, 0)
+    
+                
     def add_depot_constraints(self):
         "Creating constraints related to depot"
-        list_deliveries_depot =  self.model.deliveries_by_order[self.model.t_depot]
-        get_outbound = [d.assigned_var for d in list_deliveries_depot if d.current_cus==self.model.t_depot]
-        get_inbound = [d.assigned_var for d in list_deliveries_depot if d.previous_cus==self.model.t_depot]
-        self.cplex.add_constraint(self.cplex.sum(get_inbound) ==  sum(get_outbound))
+        for driver,list_deliveries in tqdm(self.model.deliveries_by_driver.items()):
+            k = self.model.t_depot.customer
+            get_outbound = [d.assigned_var for d in self.model.outbound_deliveries_by_order[k] if d.driver_id==driver]
+            get_inbound = [d.assigned_var for d in self.model.inbound_deliveries_by_order[k] if d.driver_id==driver]
+            self.cplex.add_constraint(self.cplex.sum(get_inbound) ==  self.cplex.sum(get_outbound))
+            
+            
+            # if a driver has atleast one delivery then he has to start from depot atleast one time
+            # (this constraints might not be needed if there are constraints of remained-volume)
+            self.cplex.add_if_then(self.cplex.sum(d.assigned_var for d in list_deliveries)>=1,self.cplex.sum(get_outbound)>=1)        
 
     def add_time_constraints(self): 
         "Creating time constraints"
-        for order,list_delivering in self.model.deliveries_by_order.items():
+        for order in tqdm(self.model.orders_list):
+            list_delivering = self.model.inbound_deliveries_by_order[order.customer]+self.model.outbound_deliveries_by_order[order.customer]
             for d in list_delivering: 
                 waiting_time = self.cplex.max(0,order.earliest_delivery_time-d.arrive_time_var)
-                self.cplex.add_constraint(d.arrive_time_var + waiting_time >= order.earliest_delivery_time)
-                self.cplex.add_constraint(d.arrive_time_var + waiting_time <= order.latest_delivery_time)
-                previous_cus = d.previous_cus
-                t_j = d.arrive_time_var 
-                get_inbounds_of_previous = [_d for _d in list_delivering if _d.current_cus==previous_cus]
-                for pre_cus in get_inbounds_of_previous:
-                    t_i = pre_cus.arrive_time_var 
-                    ind_exist_both = self.cplex.binary_var()
-                    self.cplex.add_constraint(ind_exist_both == d.assigned_var * pre_cus.assigned_var)
-                    self.cplex.add_indicator(ind_exist_both , t_i + waiting_time + self.model.get_time(pre_cus.current_cus,d.current_cus))
-
+                self.model.total_wating_time += waiting_time
+                
+                c1=self.cplex.add_indicator(d.assigned_var,d.arrive_time_var + waiting_time >= order.earliest_delivery_time)
+                c2=self.cplex.add_indicator(d.assigned_var,d.arrive_time_var + waiting_time <= order.latest_delivery_time)
+                print(c1,c2)
+                
+                # if d.previous_cus == self.model.t_depot: 
+                #     ""
+                # else:
+                #     current_arriving_time = d.arrive_time_var 
+                #     get_inbounds_of_previous = self.model.inbound_deliveries_by_order[d.previous_cus]
+                #     for pre_delivery in get_inbounds_of_previous:
+                #         pre_arriving_time = pre_delivery.arrive_time_var 
+                #         ind_exist_path = self.cplex.binary_var()
+                #         self.cplex.add_constraint(ind_exist_path == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var))
+                #         moving_time = self.model.get_time(pre_delivery.current_cus,d.current_cus)
+                #         self.cplex.add_indicator(ind_exist_path, pre_arriving_time + waiting_time + moving_time == current_arriving_time)
+                        
 
         
     def add_vehilce_loading_constraints(self):
-        for order,list_delivering in tqdm(self.model.deliveries_by_order.items()):
-            
+        for order in tqdm(self.model.orders_list):
+            list_delivering = self.model.inbound_deliveries_by_order[order.customer]+self.model.outbound_deliveries_by_order[order.customer]
             for d in list_delivering: 
+                self.cplex.add_constraint(d.remained_volume_var + order.volume <= d.capacity_truck)
+                current_remain_volume = d.remained_volume_var 
                 if d.previous_cus == self.model.t_depot: 
-                    
-                    self.cplex.add_constraint(d.remained_volume_var + order.volume <= d.capacity_truck)
-
-                    
+                    ""
                 else:    
-                    # mình là d
-                    previous_cus = d.previous_cus 
-                    Z_j = d.remained_volume_var # load hiện tại
-                    self.cplex.add_constraint(d.remained_volume_var <= d.capacity_truck)
-                    get_inbounds_of_previous = [_d for _d in list_delivering if _d.current_cus==previous_cus]
-                    
-                    for pre_cus in get_inbounds_of_previous:
-                       
-                        Z_i = pre_cus.remained_volume_var
-                        ind_exist_both = self.cplex.binary_var()
-                        self.cplex.add_constraint(ind_exist_both == d.assigned_var * pre_cus.assigned_var)
-                        # load hiện tại = load trước đó - load-đã dỡ xuống ở chỗ hiện tại
-                        self.cplex.add_indicator(ind_exist_both , Z_j + order.volume == Z_i) 
+                    get_inbounds_of_previous = self.model.inbound_deliveries_by_order[d.previous_cus]
 
-        
+                    for pre_delivery in get_inbounds_of_previous:
+                        pre_remain_volume = pre_delivery.remained_volume_var
+                        ind_exist_path = self.cplex.binary_var()
+                        self.cplex.add_constraint(ind_exist_path == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var))
+                        self.cplex.add_indicator(ind_exist_path , current_remain_volume + order.volume == pre_remain_volume) 
 
-            
     def add_constraints(self):
         self.add_order_constraint()
         self.add_depot_constraints()
         self.add_time_constraints()
-        self.add_vehilce_loading_constraints()
+        # self.add_vehilce_loading_constraints()
         
 
 class SetupObjectives():
-    def __init__(self,model:  ModelObjects):
+    def __init__(self,model:  ModelObject):
         self.model = model
         self.cplex=self.model.cplex
     
     def add_objectives(self):
         ''
-        self.model.total_distance = 0 
-        self.model.total_distance = self.cplex.sum((s.assigned_var*self.model.get_time(s.previous_cus,s.current_cus) for s in self.model.deliveries_by_order))
-        
-
-
-
-
-
+        list_distance = []
+        for order in self.model.orders_list:
+            list_delivering = self.model.inbound_deliveries_by_order[order]+self.model.outbound_deliveries_by_order[order]
+            for d in list_delivering:
+                list_distance.append(d.assigned_var*self.model.get_time(d.previous_cus,d.current_cus))
+                
+        self.model.total_distance = self.cplex.sum(list_distance)
+        total_slack_orders = self.cplex.sum(self.model.slack_orders)
         # add  kpi 
-        self.model.add_kpi(self.model.total_distance, "Total distance") 
+        self.cplex.add_kpi(self.model.total_distance, "Total distance") 
+        self.cplex.add_kpi(total_slack_orders, "Total slack orders") 
+        # self.cplex.add_kpi(self.model.total_wating_time, "Total waiting time") 
 
 
         # add objective 
-        self.model.minimize_static_lex([self.model.total_distance])
+        # self.cplex.minimize(self.model.total_distance)
+        self.cplex.minimize(total_slack_orders)
+        # self.cplex.minimize(self.model.total_wating_time)
+        # self.cplex.minimize_static_lex([self.model.total_distance,self.model.total_wating_time])
+        
 class ModelSolve: 
-    def __init__(self, model: ModelObjects):
+    def __init__(self, model: ModelObject):
         self.model = model
         self.cplex=self.model.cplex
-    def solve_model(self): 
-        ''
 
+    def solve_model(self,solution_file):
+        print("Solving the model...\n")
+        self.cplex.parameters.threads = 16
+        self.cplex.parameters.timelimit = 600
+        sol = self.cplex.solve(log_output=True)
+        # if isinstance(self.cplex.solution,SolveSolution):
+        #     self.cplex.solution._export_as_string(solution_file,format="s")
+        return self.cplex.solution
+        
+    # def parameter_set_with_timelimit(self, cplex, limit):
+    #     ps = cplex.create_parameter_set()
+    #     ps.add(cplex.parameters.dettimelimit, limit[0])
+    #     ps.add(cplex.parameters.preprocessing.aggregator, limit[1]) # [40,20,20]
+    #     ps.add(cplex.parameters.mip.polishafter.solutions, limit[2]) # [1,1,1]
+    #     ps.add(cplex.parameters.barrier.algorithm, limit[3])# [0,3,3]
+    #     ps.add(cplex.parameters.mip.tolerances.mipgap, 0.1)
+    #     return ps
+
+    # def solve_model(self, solution_file):
+    #     if not self.cplex.has_multi_objective():
+    #         raise "Expecting a multi-objective model!"
+        
+    #     # Get the CPLEX instance from the docplex model
+    #     self.cplex_ins = self.cplex.get_cplex()
+
+    #     with open('cplex.log','w') as cplexlogs:
+    #         self.cplex_ins.set_log_stream(cplexlogs)
+    #         self.cplex_ins.set_results_stream(cplexlogs)
+    #         # self.model.cplex_ins.runseeds(cnt=10)
+    #         # Print the details of each multi-objective round
+    #         self.cplex_ins.parameters.multiobjective.display.set(2)
+    #         # model.cplex_ins.parameters.preprocessing.aggregator = 0
+    #         # ps = [self.parameter_set_with_timelimit(self.model.cplex_ins, l) for l in [(937390,40,1,0),(1890885,20,1,3),(1865849,20,1,3)]]
+    #         ps = [self.parameter_set_with_timelimit(self.cplex_ins, l) for l in [(813730,40,1,0),(813730,40,1,0)]]
+    #         solve = self.cplex_ins.solve(paramsets=ps)
+    #         self.cplex_ins.solution.write(solution_file)            
+            
+            
+class CreateResults():
+    
+    def __init__(self,model:ModelObject,solution:SolveSolution):
+        self.model = model
+        self.solution = solution
+        
+    def create_results(self): 
+
+        
+        list_rows = []
+        if self.solution is None:
+            print("No solution found")
+            
+        if self.solution:
+            for s in self.model.slack_orders:
+                print(s,self.solution.get_value(s))
+                
+                
+            self.model.cplex.report_kpis(solution=self.solution)
+            
+            for d in self.model.ALL_DELIVERIES:
+                if round(self.solution.get_value(d.assigned_var))==1:
+                    arrive_time = self.solution.get_value(d.assigned_var)
+                    remain_volume = self.solution.get_value(d.remained_volume_var)
+                    list_rows.append((d.driver_id,d.previous_cus,d.current_cus,remain_volume,d.capacity_truck,arrive_time))
+                    print(list_rows[-1])
+                    
+        df = pd.DataFrame(columns=["Driver","Previous","Current","Remain Volume","Capacity","Arrive Time"],data=list_rows)
+        df.to_excel("result.xlsx")
+        
+        
 class ModelBuild:
-
-    def __init__(self, data, scenario_id=None):
+    def __init__(self, input_file,solution_file):
         self.start_time = time.time()
-        self.data = data
-        self.scenario_id = scenario_id
-        docplex = Model()
-        self.model = ModelObjects(self.data,docplex)
+        self.input_file = input_file
+        self.solution_file = solution_file
+        self.docplex = Model()
+        self.model = ModelObject(self.docplex)
+        
         
     def create_model_run(self):
         "Creating model run"
         self.Setup_Data = SetupData(self.model)
-        # self.Setup_Data.setup_data()
+        self.Setup_Data.setup_data(self.input_file)
         print("Done setup data")
+        
         self.Setup_Constraints = SetupConstraints(self.model)
         self.Setup_Constraints.add_constraints()
+        print("Done setup constraints")
+        
         self.Setup_Objectives = SetupObjectives(self.model)
         self.Setup_Objectives.add_objectives()
-        self.Model_Solve = ModelSolve(self.data, self.model)
-        # self.solution = self.Model_Solve.solve_model()
-        # self.Create_Results = CreateResults(
-        #     self.data, self.model, self.solution)
-        # self.Create_Results.create_results()
+        print("Done setup objectives")
+        
+        self.Model_Solve = ModelSolve(self.model)
+        load_solution = self.Model_Solve.solve_model(self.solution_file)
+        print(f"Done solve the model >> saved >> {self.solution_file}")
+        print("\n")
+
+        # load_solution = SolveSolution.from_file(self.solution_file, self.docplex)[0]
+        # print("Done load solution from file")
+        
+        self.Create_Results = CreateResults(self.model, load_solution)
+        self.Create_Results.create_results()
+        print("Done create results")
         
         
 if __name__ == "__main__":
 
 
-    mb = ModelBuild('data_route.xlsx')
+    mb = ModelBuild('data_route.xlsx','model.sol')
     mb.create_model_run()
     # send_high_level_result()
     # send_detail_result()
