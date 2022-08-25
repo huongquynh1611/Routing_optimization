@@ -58,6 +58,7 @@ class ModelObject:
         r: overlap size, ex 1
         return True
         """
+      
         return a[0] < b[1]+r and b[0] < a[1]+r
     
     def load_input_data_excel(self,input_file):
@@ -127,9 +128,11 @@ class ModelObject:
         self.truck_list = list(TTruck(*row) for _,row in self.df_truck_size.iterrows())
         self.truck_get = defaultdict(lambda:None,{t.type:t for t in self.truck_list})
         self.order_get = defaultdict(lambda:None,{o.customer:o for o in self.orders_list})
+        
 
     def get_orders_by_range(self, start_time, end_time):
         a = (start_time, end_time)
+       
         return [order 
                 for order in self.orders_list 
                 if self.is_overlap(a, (order.earliest_delivery_time, order.latest_delivery_time))]
@@ -151,6 +154,7 @@ class ModelObject:
         self.inbound_deliveries_by_order:defaultdict[TOrderDetail,list[TDelivery]] = defaultdict(lambda: list())
         self.outbound_deliveries_by_order:defaultdict[TOrderDetail,list[TDelivery]] = defaultdict(lambda: list())
         self.deliveries_by_driver:defaultdict[str,list[TDelivery]] = defaultdict(lambda: list())
+        self.cur_outbound :defaultdict[str,list[TDelivery]] = defaultdict(lambda: list())
         # ----------------------------------------------------------------------------------
         self.t_depot = TOrderDetail(self.depot_key,0,0,0)
         for roster in self.roster_list:
@@ -158,6 +162,7 @@ class ModelObject:
             truck_capacity = int(list(get_truck['Capacity'])[0])
             driver_id = list(get_truck['driver_id'])[0]
             order_list = self.get_orders_by_range(roster.start_time, roster.end_time) 
+            
             order_list = order_list + [self.t_depot]
             for order_previous in order_list: 
                 for order_current in order_list:
@@ -171,7 +176,7 @@ class ModelObject:
                         driver_id=driver_id,
                         previous_cus=order_previous.customer,
                         capacity_truck = truck_capacity
-                    )
+                    )   
                     
                     # ---------------------------------------------------
                     self.ALL_DELIVERIES.append(t)
@@ -179,6 +184,7 @@ class ModelObject:
                     self.inbound_deliveries_by_order[order_current.customer].append(t)
                     self.outbound_deliveries_by_order[order_previous.customer].append(t)
                     self.deliveries_by_driver[driver_id].append(t)
+                   
 
         
         
@@ -192,7 +198,7 @@ class SetupData():
         
     def setup_data(self,input_file):
         self.model.load_input_data_excel(input_file)
-        # self.validate_data()
+      
         self.model.load_model_objects()
         self.model.create_routes()
 
@@ -205,11 +211,17 @@ class SetupConstraints():
 
     def add_order_constraint(self):
         "Creating constraints"
+        for driver in self.model.deliveries_by_driver:
+            for i in self.model.deliveries_by_driver[driver]:
+             for j in self.model.deliveries_by_driver[driver]:
+                if i.previous_cus == j.current_cus and i.current_cus == j.previous_cus: 
+                    list_cur_pre = [i.assigned_var,j.assigned_var]
+                    print(self.cplex.add_constraint(sum(list_cur_pre) <=1))
+             
         for order in tqdm(self.model.orders_list):
             get_outbound = [d.assigned_var for d in self.model.outbound_deliveries_by_order[order.customer]]
             get_inbound = [d.assigned_var for d in self.model.inbound_deliveries_by_order[order.customer]]
 
-           
             id =  len(self.model.slack_orders)
             slack = self.cplex.binary_var(name=f"slack_{order.customer}")
             self.model.slack_orders.append(slack)
@@ -220,7 +232,7 @@ class SetupConstraints():
             if len(get_inbound)==0 or len(get_outbound)==0:
                 self.cplex.add_constraint(slack==1)
                 continue
-
+            
             self.cplex.add_indicator(slack, sum_outbound==0, 1)
             self.cplex.add_indicator(slack, sum_inbound==0, 1)
             
@@ -228,14 +240,22 @@ class SetupConstraints():
             self.cplex.add_indicator(slack, sum_inbound==1, 0)
             
             
+            
             group_by_driver = defaultdict(lambda: list())
+        
             for d in self.model.outbound_deliveries_by_order[order.customer]:
+                
                 group_by_driver[d.driver_id].append(d.assigned_var)
             for d in self.model.inbound_deliveries_by_order[order.customer]:
                 group_by_driver[d.driver_id].append(d.assigned_var)
+            
+            
                 
             # only one driver can take this order
             self.cplex.add_indicator(slack, self.cplex.sum(self.cplex.logical_or(*_l) for _,_l in group_by_driver.items())==1, 0)
+            print(self.cplex.add_indicator(slack, self.cplex.sum(self.cplex.logical_or(*_l) for _,_l in group_by_driver.items())==1, 0))
+            
+        
     
                 
     def add_depot_constraints(self):
@@ -268,13 +288,15 @@ class SetupConstraints():
                 c1=self.cplex.add_indicator(d.assigned_var,d.arrive_time_var + waiting_time >= order.earliest_delivery_time)
                 c2=self.cplex.add_indicator(d.assigned_var,d.arrive_time_var + waiting_time <= order.latest_delivery_time)
                 # print(c1,c2)
-                
+          
                 moving_time = self.model.get_time(d.previous_cus,d.current_cus)
-                if d.previous_cus == self.model.t_depot: 
+                if d.previous_cus == self.model.depot_key: 
                     ""
                 else:
                     current_arriving_time = d.arrive_time_var 
+                    
                     pre_order = self.model.order_get[d.previous_cus]
+                  
                     get_inbounds_of_previous = self.model.inbound_deliveries_by_order[d.previous_cus]
                     for pre_delivery in get_inbounds_of_previous:
                         pre_arriving_time = pre_delivery.arrive_time_var 
@@ -295,11 +317,12 @@ class SetupConstraints():
                     ""
                 else:    
                     get_inbounds_of_previous = self.model.inbound_deliveries_by_order[d.previous_cus]
+
                     for pre_delivery in get_inbounds_of_previous:
                         pre_remain_volume = pre_delivery.remained_volume_var
                         ind_exist_path = self.cplex.binary_var()
                         self.cplex.add_constraint(ind_exist_path == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var))
-                        self.cplex.add_indicator(ind_exist_path , current_remain_volume + order.volume == pre_remain_volume)
+                        self.cplex.add_indicator(ind_exist_path , current_remain_volume + order.volume == pre_remain_volume) 
 
     def add_constraints(self):
         self.add_order_constraint()
