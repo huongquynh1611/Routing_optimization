@@ -49,6 +49,7 @@ class ModelObject:
         self.total_distance = 0
         self.total_wating_time = 0
         self.slack_orders = []
+        self.list_waiting_times = []
         
     def is_overlap(self, a, b, r=0):
         """
@@ -125,7 +126,7 @@ class ModelObject:
         self.roster_list = list(TRoster(*row) for _,row in self.df_roster.iterrows())
         self.truck_list = list(TTruck(*row) for _,row in self.df_truck_size.iterrows())
         self.truck_get = defaultdict(lambda:None,{t.type:t for t in self.truck_list})
-
+        self.order_get = defaultdict(lambda:None,{o.customer:o for o in self.orders_list})
 
     def get_orders_by_range(self, start_time, end_time):
         a = (start_time, end_time)
@@ -162,15 +163,15 @@ class ModelObject:
                 for order_current in order_list:
                     if order_previous==order_current:
                         continue
-                    t=TDelivery(
+                    t = TDelivery(
                         assigned_var=self.cplex.binary_var(f"D_{driver_id}_{order_previous.customer}_{order_current.customer}"),
-                        arrive_time_var=self.cplex.continuous_var(),
+                        arrive_time_var=self.cplex.continuous_var(lb=0),
                         current_cus=order_current.customer,
-                        remained_volume_var=self.cplex.continuous_var(),
+                        remained_volume_var=self.cplex.continuous_var(lb=0),
                         driver_id=driver_id,
                         previous_cus=order_previous.customer,
                         capacity_truck = truck_capacity
-                    )   
+                    )
                     
                     # ---------------------------------------------------
                     self.ALL_DELIVERIES.append(t)
@@ -210,7 +211,7 @@ class SetupConstraints():
 
            
             id =  len(self.model.slack_orders)
-            slack = self.cplex.binary_var(name=f"slack_{id}")
+            slack = self.cplex.binary_var(name=f"slack_{order.customer}")
             self.model.slack_orders.append(slack)
             
             sum_inbound = self.cplex.sum(get_inbound)
@@ -253,26 +254,34 @@ class SetupConstraints():
     def add_time_constraints(self): 
         "Creating time constraints"
         for order in tqdm(self.model.orders_list):
-            list_delivering = self.model.inbound_deliveries_by_order[order.customer]+self.model.outbound_deliveries_by_order[order.customer]
+            list_delivering = self.model.inbound_deliveries_by_order[order.customer]
             for d in list_delivering: 
-                waiting_time = self.cplex.max(0,order.earliest_delivery_time-d.arrive_time_var)
-                self.model.total_wating_time += waiting_time
+                # print(d)
+                # waiting_time = self.cplex.continuous_var()
+                # # self.cplex.add_indicator(d.assigned_var,waiting_time==self.cplex.max(0,order.earliest_delivery_time-d.arrive_time_var),1)
+                # self.cplex.add_constraint(waiting_time==order.earliest_delivery_time-d.arrive_time_var)
+                # # self.cplex.add_indicator(d.assigned_var,waiting_time==0,0)
+                # print(order.earliest_delivery_time-d.arrive_time_var)
+                # self.model.list_waiting_times.append(waiting_time)
                 
+                waiting_time=self.cplex.max(0,order.earliest_delivery_time-d.arrive_time_var)
                 c1=self.cplex.add_indicator(d.assigned_var,d.arrive_time_var + waiting_time >= order.earliest_delivery_time)
                 c2=self.cplex.add_indicator(d.assigned_var,d.arrive_time_var + waiting_time <= order.latest_delivery_time)
-                print(c1,c2)
+                # print(c1,c2)
                 
-                # if d.previous_cus == self.model.t_depot: 
-                #     ""
-                # else:
-                #     current_arriving_time = d.arrive_time_var 
-                #     get_inbounds_of_previous = self.model.inbound_deliveries_by_order[d.previous_cus]
-                #     for pre_delivery in get_inbounds_of_previous:
-                #         pre_arriving_time = pre_delivery.arrive_time_var 
-                #         ind_exist_path = self.cplex.binary_var()
-                #         self.cplex.add_constraint(ind_exist_path == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var))
-                #         moving_time = self.model.get_time(pre_delivery.current_cus,d.current_cus)
-                #         self.cplex.add_indicator(ind_exist_path, pre_arriving_time + waiting_time + moving_time == current_arriving_time)
+                moving_time = self.model.get_time(d.previous_cus,d.current_cus)
+                if d.previous_cus == self.model.t_depot: 
+                    ""
+                else:
+                    current_arriving_time = d.arrive_time_var 
+                    pre_order = self.model.order_get[d.previous_cus]
+                    get_inbounds_of_previous = self.model.inbound_deliveries_by_order[d.previous_cus]
+                    for pre_delivery in get_inbounds_of_previous:
+                        pre_arriving_time = pre_delivery.arrive_time_var 
+                        ind_exist_path = self.cplex.binary_var()
+                        pre_waiting_time=self.cplex.max(0,pre_order.earliest_delivery_time-pre_delivery.arrive_time_var)
+                        self.cplex.add_constraint(ind_exist_path == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var))
+                        self.cplex.add_indicator(ind_exist_path, pre_arriving_time + pre_waiting_time + moving_time == current_arriving_time)
                         
 
         
@@ -286,12 +295,11 @@ class SetupConstraints():
                     ""
                 else:    
                     get_inbounds_of_previous = self.model.inbound_deliveries_by_order[d.previous_cus]
-
                     for pre_delivery in get_inbounds_of_previous:
                         pre_remain_volume = pre_delivery.remained_volume_var
                         ind_exist_path = self.cplex.binary_var()
                         self.cplex.add_constraint(ind_exist_path == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var))
-                        self.cplex.add_indicator(ind_exist_path , current_remain_volume + order.volume == pre_remain_volume) 
+                        self.cplex.add_indicator(ind_exist_path , current_remain_volume + order.volume == pre_remain_volume)
 
     def add_constraints(self):
         self.add_order_constraint()
@@ -315,16 +323,19 @@ class SetupObjectives():
                 
         self.model.total_distance = self.cplex.sum(list_distance)
         total_slack_orders = self.cplex.sum(self.model.slack_orders)
+        total_wating_time = self.cplex.sum(self.model.list_waiting_times)
         # add  kpi 
+        
+        self.cplex.add_constraint(total_slack_orders==0)
         self.cplex.add_kpi(self.model.total_distance, "Total distance") 
         self.cplex.add_kpi(total_slack_orders, "Total slack orders") 
-        # self.cplex.add_kpi(self.model.total_wating_time, "Total waiting time") 
+        self.cplex.add_kpi(total_wating_time, "Total waiting time") 
 
 
         # add objective 
         # self.cplex.minimize(self.model.total_distance)
         self.cplex.minimize(total_slack_orders)
-        # self.cplex.minimize(self.model.total_wating_time)
+        self.cplex.minimize(total_wating_time)
         # self.cplex.minimize_static_lex([self.model.total_distance,self.model.total_wating_time])
         
 class ModelSolve: 
@@ -387,12 +398,14 @@ class CreateResults():
             for s in self.model.slack_orders:
                 print(s,self.solution.get_value(s))
                 
+            for wt in self.model.list_waiting_times:
+                print(wt, self.solution.get_value(wt))
                 
             self.model.cplex.report_kpis(solution=self.solution)
             
             for d in self.model.ALL_DELIVERIES:
                 if round(self.solution.get_value(d.assigned_var))==1:
-                    arrive_time = self.solution.get_value(d.assigned_var)
+                    arrive_time = self.solution.get_value(d.arrive_time_var)
                     remain_volume = self.solution.get_value(d.remained_volume_var)
                     list_rows.append((d.driver_id,d.previous_cus,d.current_cus,remain_volume,d.capacity_truck,arrive_time))
                     print(list_rows[-1])
