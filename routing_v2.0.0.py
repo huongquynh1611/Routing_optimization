@@ -270,7 +270,7 @@ class SetupConstraints():
                 # print(c1,c2)
                 
                 moving_time = self.model.get_time(d.previous_cus,d.current_cus)
-                if d.previous_cus == self.model.t_depot: 
+                if d.previous_cus == self.model.t_depot.customer: 
                     ""
                 else:
                     current_arriving_time = d.arrive_time_var 
@@ -315,11 +315,15 @@ class SetupObjectives():
     
     def add_objectives(self):
         ''
+        cost_rate = 1.5
         list_distance = []
         for order in self.model.orders_list:
             list_delivering = self.model.inbound_deliveries_by_order[order]+self.model.outbound_deliveries_by_order[order]
             for d in list_delivering:
-                list_distance.append(d.assigned_var*self.model.get_time(d.previous_cus,d.current_cus))
+                cost = d.assigned_var*self.model.get_distance(d.previous_cus,d.current_cus)*cost_rate
+                if d.previous_cus==self.model.t_depot.customer:
+                    cost += int(d.capacity_truck)*50 # starting cost
+                list_distance.append(cost)
                 
         self.model.total_distance = self.cplex.sum(list_distance)
         total_slack_orders = self.cplex.sum(self.model.slack_orders)
