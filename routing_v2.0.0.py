@@ -112,7 +112,7 @@ class ModelObject:
         self.dist_time = [TDistTime(*row) for _,row in self.df_dist_time.iterrows()]
         self.get_dist_time = {(t.customer_from,t.customer_to):t.time for t in self.dist_time}
         self.orders_list = [TOrderDetail(*row) for _,row in self.df_order.iterrows()]
-        self.orders_list = self.orders_list[:50]
+        self.orders_list = self.orders_list[:30]
         self.get_order_volume = {t.customer:t.volume for t in self.orders_list}
         self.late_cost = [TLatenessCost(*row) for _,row in self.df_lateness_cost.iterrows()]
         
@@ -129,7 +129,7 @@ class ModelObject:
         self.roster_list = list(TRoster(*row) for _,row in self.df_roster.iterrows())
         self.truck_list = list(TTruck(*row) for _,row in self.df_truck_size.iterrows())
         self.truck_get = defaultdict(lambda:None,{t.type:t for t in self.truck_list})
-        self.order_get = defaultdict(lambda:self.t_depot,{o.customer:o for o in self.orders_list})
+        self.order_get = defaultdict(lambda:None,{o.customer:o for o in self.orders_list+[self.t_depot]})
         
 
     def get_orders_by_range(self, start_time, end_time):
@@ -261,7 +261,7 @@ class SetupConstraints():
             
             # if a driver has atleast one delivery then he has to start from depot atleast one time
             # (this constraints might not be needed if there are constraints of remained-volume)
-            self.cplex.add_if_then(self.cplex.sum(d.assigned_var for d in list_deliveries)>=1,self.cplex.sum(get_outbound)>=1)        
+            # self.cplex.add_if_then(self.cplex.sum(d.assigned_var for d in list_deliveries)>=1,self.cplex.sum(get_outbound)>=1)        
 
     def add_time_constraints(self): 
         "Creating time constraints"
@@ -403,7 +403,7 @@ class ModelSolve:
             self.cplex_ins.parameters.multiobjective.display.set(2)
             # model.cplex_ins.parameters.preprocessing.aggregator = 0
             # ps = [self.parameter_set_with_timelimit(self.model.cplex_ins, l) for l in [(937390,40,1,0),(1890885,20,1,3),(1865849,20,1,3)]]
-            ps = [self.parameter_set(self.cplex_ins, params) for params in [(1800,40,5,1),(1800,40,10,1)]]
+            ps = [self.parameter_set(self.cplex_ins, params) for params in [(900,40,5,1),(900,40,10,1)]]
             solve = self.cplex_ins.solve(paramsets=ps)
             self.cplex_ins.solution.write(solution_file)            
             
