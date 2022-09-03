@@ -112,7 +112,7 @@ class ModelObject:
         self.dist_time = [TDistTime(*row) for _,row in self.df_dist_time.iterrows()]
         self.get_dist_time = {(t.customer_from,t.customer_to):t.time for t in self.dist_time}
         self.orders_list = [TOrderDetail(*row) for _,row in self.df_order.iterrows()]
-        self.orders_list = self.orders_list[:]
+        self.orders_list = self.orders_list[:15]
         self.get_order_volume = {t.customer:t.volume for t in self.orders_list}
         self.late_cost = [TLatenessCost(*row) for _,row in self.df_lateness_cost.iterrows()]
         
@@ -120,13 +120,13 @@ class ModelObject:
         self.unique_cust_list = list(self.df_dist_time.cus_to.unique())
         self.depot_key='DEPOT01'
         self.unique_cust_list.remove(self.depot_key)
-        self.driver_list = list(self.df_driver.driver_id.unique())[:]
+        self.driver_list = list(self.df_driver.driver_id.unique())[:2]
         
         #Object for truck-driver assignment
         self.driver_truck_assign = pd.merge(self.df_driver,self.df_truck_size,left_on='qualification',
                                                   right_on='Truck').drop('qualification',axis=1)
         
-        self.roster_list = list(TRoster(*row) for _,row in self.df_roster.iterrows())
+        self.roster_list = list(TRoster(*row) for _,row in self.df_roster.iterrows())[:2]
         self.truck_list = list(TTruck(*row) for _,row in self.df_truck_size.iterrows())
         self.truck_get = defaultdict(lambda:None,{t.type:t for t in self.truck_list})
         
@@ -156,13 +156,13 @@ class ModelObject:
         self.deliveries_by_driver:defaultdict[str,list[TDelivery]] = defaultdict(lambda: list())
 
         # ----------------------------------------------------------------------------------
-        self.d_depot = TOrderDetail(self.depot_key,0,0,0)
+        self.depot = TOrderDetail(self.depot_key,0,0,0)
         for roster in self.roster_list:
             get_truck = self.driver_truck_assign.loc[self.driver_truck_assign['driver_id']==roster.driver,:]
             truck_capacity = int(list(get_truck['Capacity'])[0])
             driver_id = list(get_truck['driver_id'])[0]
             order_list = self.get_orders_by_range(roster.start_time, roster.end_time) 
-            order_list = order_list + [self.d_depot]
+            order_list = order_list + [self.depot]
             for order_current in order_list:
                 lst = []
                 for order_previous in order_list: 
@@ -200,7 +200,7 @@ class ModelObject:
                     self.outbound_deliveries_by_order[pr.customer].append(t)
                     self.deliveries_by_driver[driver_id].append(t)
                     
-        self.order_get = defaultdict(lambda:None,{o.customer:o for o in self.orders_list+[self.d_depot]})
+        self.order_get = defaultdict(lambda:None,{o.customer:o for o in self.orders_list+[self.depot]})
     
         
     
@@ -271,42 +271,108 @@ class SetupConstraints():
     
     def add_depot_constraints(self):
         "Creating constraints related to depot"
-        for driver,list_deliveries in tqdm(self.model.deliveries_by_driver.items()):
-            k = self.model.d_depot.customer
+        for driver,_ in tqdm(self.model.deliveries_by_driver.items()):
+            k = self.model.depot.customer
             get_outbound = [d.assigned_var for d in self.model.outbound_deliveries_by_order[k] if d.driver_id==driver]
             get_inbound = [d.assigned_var for d in self.model.inbound_deliveries_by_order[k] if d.driver_id==driver]
             # CONSTRAINT: for each driver, the total times he leaves the depot equals to the total times he goes back
             self.cplex.add_constraint(self.cplex.sum(get_inbound) ==  self.cplex.sum(get_outbound))
+        
+        dict_isNotTheHeadVars_groupBy_driver = defaultdict(lambda: [])
+        connectedPathVar_list = []
+
+        for order in tqdm(self.model.orders_list+[self.model.depot]):
+            for d in self.model.inbound_deliveries_by_order[order.customer]: 
+                if d.previous_cus == self.model.depot_key:
+                    moving_time = self.model.get_time(d.previous_cus,d.current_cus)
+                    get_pre_inbounds_of_driver = [ib for ib in self.model.inbound_deliveries_by_order[d.previous_cus] if ib.driver_id==d.driver_id]
+                    for pre_delivery in get_pre_inbounds_of_driver:
+                        is_not_theHead_var = self.cplex.binary_var(name=f"is_not_the_head[{d.driver_id}:{pre_delivery.previous_cus}->{d.previous_cus}->{d.current_cus}]")
+                        is_connected_var = self.cplex.binary_var(name=f"is_connected[{d.driver_id}:{pre_delivery.previous_cus}->{d.previous_cus}->{d.current_cus}]")
+                        
+                        # self.cplex.add_if_then(is_not_theHead_var==0, pre_delivery.assigned_var+d.assigned_var==2)
+                        # self.cplex.add_if_then(is_not_theHead_var==0, is_connected_var==0)
+                        # self.cplex.add_if_then(is_connected_var==1, pre_delivery.assigned_var+d.assigned_var==2)
+                        
+                        dict_isNotTheHeadVars_groupBy_driver[d.driver_id].append(is_not_theHead_var)
+                        connectedPathVar_list.append((pre_delivery,d,is_not_theHead_var,is_connected_var))
+                        is_existPath = self.cplex.logical_and(d.assigned_var,pre_delivery.assigned_var,is_not_theHead_var,is_connected_var)
+                        self.cplex.add_if_then(is_existPath==1,pre_delivery.arrive_time_var + pre_delivery.waiting_time_var + moving_time == d.arrive_time_var)
+                    
+                    
+                    # # CONSTRAINT: considering a not-the-head delivery starting from depot (d[0->j]), there is one and only one back-to-depot delivery (d[i->0]) connect to it
+                    # # for example: 
+                    # #   + At the the depot, let's consider this 3 exist deliveres: d01=d[0->1], d20=d[2->0], d30=d[3->0], can be formed to 2 cut-paths p1={d20 d01}, p2={d30 d01}
+                    # #   => So, neither p1 or p2 are connected 
+                    # if len(list_isConnectedVars)>0:
+                    #     self.cplex.add_if_then(self.cplex.sum(self.cplex.logical_and(x[0],x[1],x[2]) for x in list_isConnectedVars)>=1,self.cplex.sum(x[3] for x in list_isConnectedVars)==1)
+        df_connectedPathVar = pd.DataFrame(columns=["pre","cur","isNotHead","isConnected"],data=connectedPathVar_list)
+        for _,group in df_connectedPathVar.groupby(by=["pre"]):
+            sum1 = 0
+            sum2 = 0
+            for t in group.itertuples():
+                sum1 += self.cplex.logical_and(t.pre.assigned_var,t.cur.assigned_var,t.isNotHead)
+                sum2 += t.isConnected
+                
+            self.cplex.add_if_then(sum1>=1,sum2==1)
+        
+        for _,group in df_connectedPathVar.groupby(by=["cur"]):
+            sum1 = 0
+            sum2 = 0
+            for t in group.itertuples():
+                sum1 += self.cplex.logical_and(t.pre.assigned_var,t.cur.assigned_var,t.isNotHead)
+                sum2 += t.isConnected
+                
+            self.cplex.add_if_then(sum1>=1,sum2==1)
+        self.model.xxx = df_connectedPathVar
+        for driver_id,list_isNotTheHeadVars in dict_isNotTheHeadVars_groupBy_driver.items():
+            # CONSTRAINT: for each driver, there is only one delivery that can be the head (starting) of his route
+            if len(list_isNotTheHeadVars)>0:
+                self.cplex.add_constraint(self.cplex.if_then(self.cplex.sum(d.assigned_var for d in self.model.deliveries_by_driver[driver_id])>=1,self.cplex.sum(self.cplex.logical_not(v) for v in list_isNotTheHeadVars)==1),ctname=f"only one delivery can be the head {driver_id}")
+
+        #             else:
+        #                 ""
+        #                 # ELSE, the Var not only depends on the existance of the 1st node and 3nd node but also depends on 2 more requirements bellow
+        #                 # First, for each driver, there is only one delivery that can be the head (starting) of his route
+        #                 # delivery : d[i->j]
+        #                 # d[0->1] (the Head) --> d[1->2] --> d[2->3] --> d[3->0] --> d[0->4] (not the head) --> d[4->0] (ending)
+        #                 # Second, considering a not-the-head delivery starting from depot (d[0->j]), there is one and only one back-to-depot delivery (d[i->0]) connect to it
+        #                 is_not_theHead_var = self.cplex.binary_var(name=f"is_not_the_head[{d.driver_id}:{pre_delivery.previous_cus}->{d.previous_cus}->{d.current_cus}]")
+        #                 is_connected_var = self.cplex.binary_var(name=f"is_connected[{d.driver_id}:{pre_delivery.previous_cus}->{d.previous_cus}->{d.current_cus}]")
+        #                 self.model.list_is_connected_var.append(is_connected_var)
+                        
+        #                 # self.cplex.add_if_then(is_connected_var==1,d.assigned_var+pre_delivery.assigned_var==2)
+        #                 # self.cplex.add_if_then(is_not_theHead_var==0,d.assigned_var+pre_delivery.assigned_var==2)
+        #                 self.cplex.add_if_then(is_connected_var==1,d.assigned_var+pre_delivery.assigned_var==2)
+        #                 # self.cplex.add_if_then(is_not_theHead_var==0,is_connected_var==0)
+        #                 dict_isNotTheHeadVars_groupBy_driver[d.driver_id].append(is_not_theHead_var)
+        #                 list_isConnectedVars.append((d.assigned_var, pre_delivery.assigned_var,is_not_theHead_var, is_connected_var))
+        #                 self.cplex.add_constraint(is_existPath_var == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var,is_not_theHead_var,is_connected_var))
+
+
+                    
+        #         # CONSTRAINT: considering a not-the-head delivery starting from depot (d[0->j]), there is one and only one back-to-depot delivery (d[i->0]) connect to it
+        #         # for example: 
+        #         #   + At the the depot, let's consider this 3 exist deliveres: d01=d[0->1], d20=d[2->0], d30=d[3->0], can be formed to 2 cut-paths p1={d20 d01}, p2={d30 d01}
+        #         #   => So, neither p1 or p2 are connected 
+        #         if len(list_isConnectedVars)>0:
+        #             self.cplex.add_if_then(self.cplex.sum(self.cplex.logical_and(x[0],x[1],x[2]) for x in list_isConnectedVars)>=1,self.cplex.sum(x[3] for x in list_isConnectedVars)==1)
+        # #-------       
+
+            
                   
             
-    # def add_start_time_constraint(self):
-    #     ""
-    #     max_latency = 3 # hours
-    #     max_waiting = 5 # hours
-    #     for order in tqdm(self.model.orders_list):
-    #         list_delivery = self.model.inbound_deliveries_by_order[order]
-    #         for d in list_delivery:
-    #             if d.previous_cus == self.model.depot_key:
-    #                 list_start_time_var = []
-    #                 for start_time in np.arange(math.floor(order.earliest_delivery_time-max_waiting),math.ceil(order.latest_delivery_time+max_latency),0.5):
-    #                     temp = self.cplex.binary_var()
-    #                     list_start_time_var.append(temp)
-    #                     self.cplex.add_indicator(temp,d.arrive_time_var==start_time)
-    #                 self.cplex.add_constraint(self.cplex.sum(list_start_time_var)<=1)
-                        
-                            
     def add_time_constraints(self): 
         "Creating time constraints"
 
-        dict_isNotTheHeadVars_groupBy_driver = defaultdict(lambda: [])
         #-------
-        for order in tqdm(self.model.orders_list+[self.model.d_depot]):
+        for order in tqdm(self.model.orders_list+[self.model.depot]):
             list_delivering = self.model.inbound_deliveries_by_order[order.customer]
             for d in list_delivering: 
 
                 current_arriving_time = d.arrive_time_var 
                 
-                if order!=self.model.d_depot:
+                if order!=self.model.depot:
                     waiting_time=d.waiting_time_var
 
                     late_time = self.cplex.max(0,current_arriving_time-order.latest_delivery_time)
@@ -319,66 +385,31 @@ class SetupConstraints():
 
                 get_pre_inbounds_of_driver = [ib for ib in self.model.inbound_deliveries_by_order[d.previous_cus] if ib.driver_id==d.driver_id]
                 
-                list_isConnectedVars = []
                 for pre_delivery in get_pre_inbounds_of_driver:
                     pre_arriving_time = pre_delivery.arrive_time_var 
                     
                     # A cut-path: 1->2->3 is formed by 2 deliveries d[1->2] and d[2->3] and by 3 nodes (customers): 1,2,3 
-                    # this Var is to indicate that the cut-path exists or not
-                    is_existPath_var = self.cplex.binary_var(name=f"is_exist_path[{d.driver_id}:{pre_delivery.previous_cus}->{d.previous_cus}->{d.current_cus}],")
-
                     pre_waiting_time=pre_delivery.waiting_time_var
                     if d.previous_cus != self.model.depot_key: 
-                        # IF the 2nd node of the cut-path is not the depot, then the Var depends only on the existance of the rest 2 nodes 
-                        self.cplex.add_constraint(is_existPath_var == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var))
-                    else:
-                        ""
-                        # ELSE, the Var not only depends on the existance of the 1st node and 3nd node but also depends on 2 more requirements bellow
-                        # First, for each driver, there is only one delivery that can be the head (starting) of his route
-                        # delivery : d[i->j]
-                        # d[0->1] (the Head) --> d[1->2] --> d[2->3] --> d[3->0] --> d[0->4] (not the head) --> d[4->0] (ending)
-                        # Second, considering a not-the-head delivery starting from depot (d[0->j]), there is one and only one back-to-depot delivery (d[i->0]) connect to it
-                        is_not_theHead_var = self.cplex.binary_var(name=f"is_not_the_head[{d.driver_id}:{pre_delivery.previous_cus}->{d.previous_cus}->{d.current_cus}]")
-                        is_connected_var = self.cplex.binary_var(name=f"is_connected[{d.driver_id}:{pre_delivery.previous_cus}->{d.previous_cus}->{d.current_cus}]")
-                        dict_isNotTheHeadVars_groupBy_driver[d.driver_id].append(is_not_theHead_var)
-                        list_isConnectedVars.append(is_connected_var)
-                        self.cplex.add_constraint(is_existPath_var == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var,is_not_theHead_var,is_connected_var))
-
-                    # CONSTRAINT
-                    self.cplex.add_indicator(is_existPath_var, pre_arriving_time + pre_waiting_time + moving_time == current_arriving_time)
-                    
-                # CONSTRAINT: considering a not-the-head delivery starting from depot (d[0->j]), there is one and only one back-to-depot delivery (d[i->0]) connect to it
-                # for example: 
-                #   + At the the depot, let's consider this 3 exist deliveres: d01=d[0->1], d20=d[2->0], d30=d[3->0], can be formed to 2 cut-paths p1={d20 d01}, p2={d30 d01}
-                #   => So, neither p1 or p2 are connected 
-                if len(list_isConnectedVars)>0:
-                    self.cplex.add_constraint(self.cplex.sum(list_isConnectedVars)==1)
-        #-------       
-        for driver_id,list_isNotTheHeadVars in dict_isNotTheHeadVars_groupBy_driver.items():
-            # CONSTRAINT: for each driver, there is only one delivery that can be the head (starting) of his route
-            if len(list_isNotTheHeadVars)>0:
-                self.cplex.add_constraint(self.cplex.sum(self.cplex.logical_not(v) for v in list_isNotTheHeadVars)==1,ctname=f"only one delivery can be the head {driver_id}")
-        
+                        # CONSTRAINT: if both d[1->2] and d[2->3] are exist then pre_arriving_time + pre_waiting_time + moving_time == current_arriving_time
+                        self.cplex.add_if_then(pre_delivery.assigned_var+d.assigned_var==2, pre_arriving_time + pre_waiting_time + moving_time == current_arriving_time)
         
         
     def add_vehilce_loading_constraints(self):
-        for order in tqdm(self.model.orders_list+[self.model.d_depot]):
+        for order in tqdm(self.model.orders_list+[self.model.depot]):
             list_delivering = self.model.inbound_deliveries_by_order[order.customer]
             for d in list_delivering: 
                 current_remain_volume = d.remained_volume_var
                 
                 #CONSTRAINT: the volume remaining after unloaded packages + volume of unloaded packages <= the truck's capacity
-                self.cplex.add_constraint(d.remained_volume_var + order.volume <= d.capacity_truck)
-                
+                self.cplex.add_indicator(d.assigned_var,d.remained_volume_var + order.volume <= d.capacity_truck)
+
                 if d.previous_cus != self.model.depot_key:
-                    get_ỏe_inbounds_of_driver = [ib for ib in self.model.inbound_deliveries_by_order[d.previous_cus] if ib.driver_id==d.driver_id]
-                    for pre_delivery in get_ỏe_inbounds_of_driver:
+                    get_order_inbounds_of_driver = [ib for ib in self.model.inbound_deliveries_by_order[d.previous_cus] if ib.driver_id==d.driver_id]
+                    for pre_delivery in get_order_inbounds_of_driver:
                         pre_remain_volume = pre_delivery.remained_volume_var
-                        ind_exist_path = self.cplex.binary_var()
-                        self.cplex.add_constraint(ind_exist_path == self.cplex.logical_and(d.assigned_var, pre_delivery.assigned_var))
-                        
                         # CONSTRAINT: the volume remaining after unloading packages + volume of unloaded packages == the volume remaining before arriving
-                        self.cplex.add_indicator(ind_exist_path , current_remain_volume + order.volume == pre_remain_volume) 
+                        self.cplex.add_if_then(pre_delivery.assigned_var+d.assigned_var==2 , current_remain_volume + order.volume == pre_remain_volume) 
 
 
 
@@ -403,13 +434,13 @@ class SetupObjectives():
         starting_cost_rate = 10 # $/truck_size
         
         delivery_costs = []
-        for order in self.model.orders_list+[self.model.d_depot]:
+        for order in self.model.orders_list+[self.model.depot]:
             list_delivering = self.model.inbound_deliveries_by_order[order.customer]+self.model.outbound_deliveries_by_order[order.customer]
             for d in list_delivering:
                 cost = 0
                 
                 dist_cost = self.model.get_distance(d.previous_cus,d.current_cus)*distance_cost_rate
-                if d.previous_cus==self.model.d_depot.customer:
+                if d.previous_cus==self.model.depot.customer:
                     dist_cost += int(d.capacity_truck)*starting_cost_rate
                 
                 cost += dist_cost * d.assigned_var
@@ -479,8 +510,10 @@ class CreateResults():
             value = self.solution.get_value(var)
         except DOcplexException:
             value = var
+            print("Solution get value failed: ", var, "(DOcplexException)")
         except:
             value = 0
+            print("Solution get value failed: ", var, "(Unknown)")
             
         return value
     
@@ -491,10 +524,11 @@ class CreateResults():
             print("No solution found")
         
         if self.solution:
-
-            # for s in self.model.slack_orders:
-            #     print(s,self.get_value(s))
-
+            
+            for row in self.model.xxx.itertuples():
+                if round(self.get_value(row.pre.assigned_var))+round(self.get_value(row.cur.assigned_var))==2:
+                    print(row.pre.assigned_var.name,row.cur.assigned_var.name,int(self.get_value(row.isConnected)),("+"if round(self.get_value(row.isNotHead))==1 else "-----"))
+            
             self.model.cplex.report_kpis(solution=self.solution)
             for d in self.model.ALL_DELIVERIES:
                 if round(self.get_value(d.assigned_var))==1:
