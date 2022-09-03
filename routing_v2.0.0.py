@@ -112,7 +112,7 @@ class ModelObject:
         self.dist_time = [TDistTime(*row) for _,row in self.df_dist_time.iterrows()]
         self.get_dist_time = {(t.customer_from,t.customer_to):t.time for t in self.dist_time}
         self.orders_list = [TOrderDetail(*row) for _,row in self.df_order.iterrows()]
-        self.orders_list = self.orders_list[:15]
+        self.orders_list = self.orders_list[:]
         self.get_order_volume = {t.customer:t.volume for t in self.orders_list}
         self.late_cost = [TLatenessCost(*row) for _,row in self.df_lateness_cost.iterrows()]
         
@@ -120,13 +120,13 @@ class ModelObject:
         self.unique_cust_list = list(self.df_dist_time.cus_to.unique())
         self.depot_key='DEPOT01'
         self.unique_cust_list.remove(self.depot_key)
-        self.driver_list = list(self.df_driver.driver_id.unique())[:2]
+        self.driver_list = list(self.df_driver.driver_id.unique())[:]
         
         #Object for truck-driver assignment
         self.driver_truck_assign = pd.merge(self.df_driver,self.df_truck_size,left_on='qualification',
                                                   right_on='Truck').drop('qualification',axis=1)
         
-        self.roster_list = list(TRoster(*row) for _,row in self.df_roster.iterrows())[:2]
+        self.roster_list = list(TRoster(*row) for _,row in self.df_roster.iterrows())[:]
         self.truck_list = list(TTruck(*row) for _,row in self.df_truck_size.iterrows())
         self.truck_get = defaultdict(lambda:None,{t.type:t for t in self.truck_list})
         
@@ -292,7 +292,7 @@ class SetupConstraints():
                         
                         # self.cplex.add_if_then(is_not_theHead_var==0, pre_delivery.assigned_var+d.assigned_var==2)
                         # self.cplex.add_if_then(is_not_theHead_var==0, is_connected_var==0)
-                        # self.cplex.add_if_then(is_connected_var==1, pre_delivery.assigned_var+d.assigned_var==2)
+                        self.cplex.add_if_then(is_connected_var==1, pre_delivery.assigned_var+d.assigned_var==2)
                         
                         dict_isNotTheHeadVars_groupBy_driver[d.driver_id].append(is_not_theHead_var)
                         connectedPathVar_list.append((pre_delivery,d,is_not_theHead_var,is_connected_var))
