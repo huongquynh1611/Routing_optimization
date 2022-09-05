@@ -154,7 +154,7 @@ class ModelObject:
         self.inbound_deliveries_by_order:defaultdict[str,list[TDelivery]] = defaultdict(lambda: list())
         self.outbound_deliveries_by_order:defaultdict[str,list[TDelivery]] = defaultdict(lambda: list())
         self.deliveries_by_driver:defaultdict[str,list[TDelivery]] = defaultdict(lambda: list())
-
+        waiting_times=np.arange(0,5,0.15)
         # ----------------------------------------------------------------------------------
         self.depot = TOrderDetail(self.depot_key,0,0,0)
         for roster in self.roster_list:
@@ -178,20 +178,23 @@ class ModelObject:
                     
                     t = TDelivery(
                         assigned_var=self.cplex.binary_var(f"D_{driver_id}_{order_previous.customer}_{order_current.customer}"),
-                        arrive_time_var=self.cplex.continuous_var(lb=0),
-                        waiting_time_var=self.cplex.continuous_var(lb=0),
+                        arrive_time_var=self.cplex.integer_var(lb=round(roster.start_time*60),ub=round(roster.end_time*60)),
+                        waiting_time_var=self.cplex.integer_var(lb=0,ub=5*12), # every 5 minute
                         current_cus=order_current.customer,
-                        remained_volume_var=self.cplex.continuous_var(lb=0),
+                        remained_volume_var=self.cplex.integer_var(lb=0,ub=truck_capacity),
                         driver_id=driver_id,
                         previous_cus=order_previous.customer,
                         capacity_truck = truck_capacity
-                    )   
+                    ) 
+                    # self.cplex.add_constraint(1==self.cplex.sum((a==t.arrive_time_var) for a in np.arange(roster.start_time,roster.end_time,0.15)))
+                    # self.cplex.add_constraint(1==self.cplex.sum((a==t.waiting_time_var) for a in waiting_times))
+                    
                     lst.append((order_previous, order_current, t))
                 
                 # Filtering 25% of the longest delivery
-                if len(lst)>14:
+                if len(lst)>20:
                     lst.sort(key=lambda x: self.get_distance(x[0].customer,x[1].customer))
-                    lst = lst[0:math.floor(0.5*len(lst))]
+                    lst = lst[0:math.floor(0.40*len(lst))]
                     
                 for pr,cu,t in lst:
                     self.ALL_DELIVERIES.append(t)
@@ -201,7 +204,7 @@ class ModelObject:
                     self.deliveries_by_driver[driver_id].append(t)
                     
         self.order_get = defaultdict(lambda:None,{o.customer:o for o in self.orders_list+[self.depot]})
-    
+        print("---------------------------------",len(self.ALL_DELIVERIES))
         
     
 class SetupData():
@@ -297,7 +300,7 @@ class SetupConstraints():
                         dict_isNotTheHeadVars_groupBy_driver[d.driver_id].append(is_not_theHead_var)
                         connectedPathVar_list.append((pre_delivery,d,is_not_theHead_var,is_connected_var))
                         is_existPath = self.cplex.logical_and(d.assigned_var,pre_delivery.assigned_var,is_not_theHead_var,is_connected_var)
-                        self.cplex.add_if_then(is_existPath==1,pre_delivery.arrive_time_var + pre_delivery.waiting_time_var + moving_time == d.arrive_time_var)
+                        self.cplex.add_if_then(is_existPath==1,pre_delivery.arrive_time_var/60 + pre_delivery.waiting_time_var/12 + moving_time == d.arrive_time_var/60)
                     
                     
                     # # CONSTRAINT: considering a not-the-head delivery starting from depot (d[0->j]), there is one and only one back-to-depot delivery (d[i->0]) connect to it
@@ -370,10 +373,10 @@ class SetupConstraints():
             list_delivering = self.model.inbound_deliveries_by_order[order.customer]
             for d in list_delivering: 
 
-                current_arriving_time = d.arrive_time_var 
+                current_arriving_time = d.arrive_time_var/60
                 
                 if order!=self.model.depot:
-                    waiting_time=d.waiting_time_var
+                    waiting_time=d.waiting_time_var/12
 
                     late_time = self.cplex.max(0,current_arriving_time-order.latest_delivery_time)
                     self.model.late_time_by_delivery[d] = late_time
@@ -386,10 +389,10 @@ class SetupConstraints():
                 get_pre_inbounds_of_driver = [ib for ib in self.model.inbound_deliveries_by_order[d.previous_cus] if ib.driver_id==d.driver_id]
                 
                 for pre_delivery in get_pre_inbounds_of_driver:
-                    pre_arriving_time = pre_delivery.arrive_time_var 
+                    pre_arriving_time = pre_delivery.arrive_time_var/60
                     
                     # A cut-path: 1->2->3 is formed by 2 deliveries d[1->2] and d[2->3] and by 3 nodes (customers): 1,2,3 
-                    pre_waiting_time=pre_delivery.waiting_time_var
+                    pre_waiting_time=pre_delivery.waiting_time_var/12
                     if d.previous_cus != self.model.depot_key: 
                         # CONSTRAINT: if both d[1->2] and d[2->3] are exist then pre_arriving_time + pre_waiting_time + moving_time == current_arriving_time
                         self.cplex.add_if_then(pre_delivery.assigned_var+d.assigned_var==2, pre_arriving_time + pre_waiting_time + moving_time == current_arriving_time)
@@ -444,7 +447,7 @@ class SetupObjectives():
                     dist_cost += int(d.capacity_truck)*starting_cost_rate
                 
                 cost += dist_cost * d.assigned_var
-                cost += d.waiting_time_var * waiting_cost_rate
+                cost += d.waiting_time_var/12 * waiting_cost_rate
                 cost += self.model.late_time_by_delivery[d] * latency_cost_rate * latency_priority_rate
                 
                 delivery_costs.append(cost)
@@ -452,10 +455,10 @@ class SetupObjectives():
                 
         total_moving_cost = self.cplex.sum(delivery_costs)
         total_slack_orders = self.cplex.sum(self.model.slack_orders)
-        total_wating_time = self.cplex.sum(d.waiting_time_var for d in self.model.ALL_DELIVERIES)
+        total_wating_time = self.cplex.sum(d.waiting_time_var/12 for d in self.model.ALL_DELIVERIES)
         total_latency = self.cplex.sum(lt for lt in self.model.late_time_by_delivery.values())
         # add  kpi 
-        self.cplex.add_constraint(total_slack_orders <= len(self.model.slack_orders)/2,"num slacks") # Num of slack not higher than 50%
+        # self.cplex.add_constraint(total_slack_orders <= len(self.model.slack_orders)/2,"num slacks") # Num of slack not higher than 50%
         self.cplex.add_kpi(total_moving_cost, "Total moving cost") 
         self.cplex.add_kpi(total_slack_orders, "Total slack orders") 
         self.cplex.add_kpi(total_wating_time, "Total waiting time") 
@@ -471,7 +474,6 @@ class ModelSolve:
         
     def parameter_set(self, cplex, limit):
         ps = cplex.create_parameter_set()
-        ps.add(cplex.parameters.threads, 8)
         ps.add(cplex.parameters.timelimit, limit[0])
         ps.add(cplex.parameters.preprocessing.aggregator, limit[1])
         ps.add(cplex.parameters.mip.polishafter.solutions, limit[2])
@@ -490,12 +492,13 @@ class ModelSolve:
         with open('cplex.log','w') as cplexlogs:
             self.cplex_ins.set_log_stream(cplexlogs)
             self.cplex_ins.set_results_stream(cplexlogs)
+            self.cplex_ins.parameters.threads.set(10)
             # self.model.cplex_ins.runseeds(cnt=10)
             # Print the details of each multi-objective round
             self.cplex_ins.parameters.multiobjective.display.set(2)
             # model.cplex_ins.parameters.preprocessing.aggregator = 0
             # ps = [self.parameter_set_with_timelimit(self.model.cplex_ins, l) for l in [(937390,40,1,0),(1890885,20,1,3),(1865849,20,1,3)]]
-            ps = [self.parameter_set(self.cplex_ins, params) for params in [(1800,40,5,1),(1800,40,10,1)]]
+            ps = [self.parameter_set(self.cplex_ins, params) for params in [(7200,40,5,1),(3600,40,10,1)]]
             solve = self.cplex_ins.solve(paramsets=ps)
             self.cplex_ins.solution.write(solution_file)            
             
@@ -532,8 +535,8 @@ class CreateResults():
             self.model.cplex.report_kpis(solution=self.solution)
             for d in self.model.ALL_DELIVERIES:
                 if round(self.get_value(d.assigned_var))==1:
-                    arrive_time = self.get_value(d.arrive_time_var)
-                    waiting_time = self.get_value(d.waiting_time_var)
+                    arrive_time = self.get_value(d.arrive_time_var)/60
+                    waiting_time = self.get_value(d.waiting_time_var)/12
                     remain_volume = self.get_value(d.remained_volume_var)
                     latency_time = self.get_value(self.model.late_time_by_delivery[d])
                         
